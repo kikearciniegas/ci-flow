@@ -78,16 +78,18 @@ figure.diagram svg{height:auto}
 <tr><td>2</td><td>Whole-codebase pass (audit, simplify, proofread, review)</td><td><span class="badge b-done">DONE</span></td><td>tests pass; skip list recorded</td></tr>
 <tr><td>3</td><td>Public repo, fresh single-commit history, MIT license</td><td><span class="badge b-done">DONE</span></td><td>gitleaks clean; no private names</td></tr>
 <tr><td>4</td><td>Harden this repo</td><td><span class="badge b-in-progress">IN PROGRESS</span></td><td><code>audit.ts --config-only</code></td></tr>
-<tr><td>5</td><td>Roll out to each repo, most expensive first</td><td><span class="badge b-open">OPEN</span></td><td>per-repo audit before and after</td></tr>
+<tr><td>5</td><td>Roll out to each repo, most expensive first</td><td><span class="badge b-in-progress">IN PROGRESS</span></td><td>per-repo audit before and after</td></tr>
 </tbody>
 </table>
 <h2 id="open-items"><a class="anchor" href="#open-items">#</a>Open items</h2>
 <ul>
-<li><strong>Branch protection on <code>main</code></strong> — <span class="badge b-open">OPEN</span>, owner decision. The policy wants a PR required; that ends direct pushes to <code>main</code>.</li>
+<li><strong>Branch protection on <code>main</code></strong> — <span class="badge b-done">DONE</span> 2026-11-04 (owner decision): PR required with 0 approvals, admins included, linear history, no force-push or deletion. No required checks until this repo has CI.</li>
 <li><strong>Dependabot config</strong> — <span class="badge b-tbd">TBD</span>. The repo has no workflows or dependencies yet, so the two Dependabot checks fail with nothing to update; add when CI arrives.</li>
 <li><strong>CI for this repo</strong> — <span class="badge b-tbd">TBD</span>. Tests run locally only (<code>bun test tests/</code>).</li>
-<li><strong>Security scan</strong> — <span class="badge b-open">OPEN</span>. Started and stopped on 2026-11-02 for usage limits; no findings produced.</li>
+<li><strong>Security scan</strong> — <span class="badge b-done">DONE</span> 2026-11-04: whole repository at <code>83a27c4</code>, medium effort, 0 findings, verified. One candidate (audited-repo text printed unchanged in the report) was rejected 3 of 3 as a false positive.</li>
 <li><strong>Parallel <code>gh api</code> reads in the audit</strong> — deferred (async rewrite).</li>
+<li><strong>First rollout</strong> — <span class="badge b-done">DONE</span> 2026-11-04 on one private repo: 22 audit FAILs to 0 (45 pass) over two PRs; protection applied after the first merge, as the policy orders.</li>
+<li><strong>Audit reads shell comments as job content</strong> — <span class="badge b-open">OPEN</span>. <code>runOf()</code> keeps <code>#</code> lines in <code>run:</code> blocks, so a comment containing &quot;e2e&quot; made <code>browser-job</code> FAIL on a cheap job. Fix: drop comment lines in <code>runOf()</code>, with a test fixture.</li>
 </ul>
 <h2 id="owner-decisions"><a class="anchor" href="#owner-decisions">#</a>Owner decisions</h2>
 <p>Recorded in <a href="../skills/ci-flow/POLICY.md"><code>POLICY.md</code> §0</a>.</p>

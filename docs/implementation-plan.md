@@ -18,15 +18,17 @@ flowchart LR
 | 2 | Whole-codebase pass (audit, simplify, proofread, review) | DONE | tests pass; skip list recorded |
 | 3 | Public repo, fresh single-commit history, MIT license | DONE | gitleaks clean; no private names |
 | 4 | Harden this repo | IN PROGRESS | `audit.ts --config-only` |
-| 5 | Roll out to each repo, most expensive first | OPEN | per-repo audit before and after |
+| 5 | Roll out to each repo, most expensive first | IN PROGRESS | per-repo audit before and after |
 
 ## Open items
 
-- **Branch protection on `main`** — OPEN, owner decision. The policy wants a PR required; that ends direct pushes to `main`.
+- **Branch protection on `main`** — DONE 2026-11-04 (owner decision): PR required with 0 approvals, admins included, linear history, no force-push or deletion. No required checks until this repo has CI.
 - **Dependabot config** — TBD. The repo has no workflows or dependencies yet, so the two Dependabot checks fail with nothing to update; add when CI arrives.
 - **CI for this repo** — TBD. Tests run locally only (`bun test tests/`).
-- **Security scan** — OPEN. Started and stopped on 2026-11-02 for usage limits; no findings produced.
+- **Security scan** — DONE 2026-11-04: whole repository at `83a27c4`, medium effort, 0 findings, verified. One candidate (audited-repo text printed unchanged in the report) was rejected 3 of 3 as a false positive.
 - **Parallel `gh api` reads in the audit** — deferred (async rewrite).
+- **First rollout** — DONE 2026-11-04 on one private repo: 22 audit FAILs to 0 (45 pass) over two PRs; protection applied after the first merge, as the policy orders.
+- **Audit reads shell comments as job content** — OPEN. `runOf()` keeps `#` lines in `run:` blocks, so a comment containing "e2e" made `browser-job` FAIL on a cheap job. Fix: drop comment lines in `runOf()`, with a test fixture.
 
 ## Owner decisions
 
