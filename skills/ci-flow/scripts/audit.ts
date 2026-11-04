@@ -232,7 +232,8 @@ const jobsOf = (wf?: WF): Job[] => (wf ? Object.entries(wf.y?.jobs ?? {}).map(([
 const needsOf = (j: any): string[] => [j?.needs ?? []].flat().map(String);
 const ifOf = (j: any) => String(j?.if ?? "");
 const stepsOf = (j: any): any[] => (Array.isArray(j?.steps) ? j.steps : []);
-const runOf = (j: any) => stepsOf(j).map((s) => String(s?.run ?? "")).join("\n");
+/** A job's `run:` text minus shell comment lines: a comment naming e2e or node is not a call. */
+const runOf = (j: any) => stepsOf(j).map((s) => String(s?.run ?? "")).join("\n").split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
 const nameOf = (x: Job) => String(x.j?.name ?? x.id);
 const DRAFT = /!\s*github\.event\.pull_request\.draft\b/;
 const PR_EVENT = /github\.event_name\s*==\s*['"]pull_request['"]/;

@@ -89,7 +89,7 @@ figure.diagram svg{height:auto}
 <li><strong>Security scan</strong> — <span class="badge b-done">DONE</span> 2026-11-04: whole repository at <code>83a27c4</code>, medium effort, 0 findings, verified. One candidate (audited-repo text printed unchanged in the report) was rejected 3 of 3 as a false positive.</li>
 <li><strong>Parallel <code>gh api</code> reads in the audit</strong> — deferred (async rewrite).</li>
 <li><strong>First rollout</strong> — <span class="badge b-done">DONE</span> 2026-11-04 on one private repo: 22 audit FAILs to 0 (45 pass) over two PRs; protection applied after the first merge, as the policy orders.</li>
-<li><strong>Audit reads shell comments as job content</strong> — <span class="badge b-open">OPEN</span>. <code>runOf()</code> keeps <code>#</code> lines in <code>run:</code> blocks, so a comment containing &quot;e2e&quot; made <code>browser-job</code> FAIL on a cheap job. Fix: drop comment lines in <code>runOf()</code>, with a test fixture.</li>
+<li><strong>Audit reads shell comments as job content</strong> — <span class="badge b-done">DONE</span>. <code>runOf()</code> kept <code>#</code> lines in <code>run:</code> blocks, so a comment containing &quot;e2e&quot; made <code>browser-job</code> FAIL on a cheap job. Fixed: <code>runOf()</code> drops comment lines; test &quot;a comment naming a tool is not a call&quot; covers <code>browser-job</code> and <code>toolchain-every-job</code>.</li>
 </ul>
 <h2 id="owner-decisions"><a class="anchor" href="#owner-decisions">#</a>Owner decisions</h2>
 <p>Recorded in <a href="../skills/ci-flow/POLICY.md"><code>POLICY.md</code> §0</a>.</p>

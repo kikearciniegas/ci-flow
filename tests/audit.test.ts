@@ -607,6 +607,17 @@ const MUTATIONS: [string, Record<string, string | null>, Record<string, unknown>
   ["account-2fa", {}, { user: { login: "o", plan: { name: "free" } } }, "pub"],
 ];
 
+describe("a comment naming a tool is not a call", () => {
+  // 0231: runOf() read shell comments, so a comment saying "e2e" made a cheap job a browser job.
+  test("comment lines in run: do not make a job a browser job or a node job", () => {
+    const files = mut(CI, 'run: test "\${{ needs.unit.result }}" = success',
+      'run: |\n          # e2e and npx named in a comment, never run\n          test "\${{ needs.unit.result }}" = success');
+    const r = auditV("base", files);
+    expect(r.rows.get("browser-job")).toBe("pass");
+    expect(r.rows.get("toolchain-every-job")).toBe("pass");
+  });
+});
+
 describe("each check can fail", () => {
   for (const [id, files, gh, v = "base", opts] of MUTATIONS) {
     test(`${id} flips to FAIL (${v})`, () => {
