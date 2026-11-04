@@ -467,6 +467,8 @@ check("cheap-secret-scan", () => {
 });
 check("audit-ungated", () => {
   const ci = needCI();
+  if (!FILES.some((f) => !f.includes("node_modules/") && /(^|\/)(package\.json|bun\.lockb?|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/.test(f)))
+    return na("no package manifest or lockfile: nothing to audit");
   for (const x of ciJobs) for (const s of stepsOf(x.j)) {
     if (!/\b(bun|npm|pnpm|yarn)\s+audit\b/.test(String(s?.run ?? ""))) continue;
     const where = at(ci.path, /\b(bun|npm|pnpm|yarn)\s+audit\b/);
@@ -661,7 +663,9 @@ check("tests-hermetic-git", () => {
 // stood in for hydration and held a runner past 30 s; a fixed sleep raced a
 // fade. Comment lines are dropped, so a comment naming the old wait is fine.
 check("browser-wait-proxy", () => {
-  const pw = FILES.filter((f) => /\.[cm]?[jt]sx?$/.test(f) && !f.includes("node_modules/") && /playwright/.test(show(f) ?? "") && /\bpage\.\w/.test(show(f) ?? ""));
+  // A Playwright file IMPORTS it at the start of a line; the word inside a string (a test fixture) is not one.
+  const PW_IMPORT = /^\s*(import\b[^\n]*from\s*["'](playwright|@playwright\/test)["']|(const|let|var)\b[^\n]*=\s*require\(\s*["'](playwright|@playwright\/test)["']\))/m;
+  const pw = FILES.filter((f) => /\.[cm]?[jt]sx?$/.test(f) && !f.includes("node_modules/") && PW_IMPORT.test(code(f)) && /\bpage\.\w/.test(show(f) ?? ""));
   if (!pw.length) return na("no Playwright test files");
   const PROXY = /waitForLoadState\(\s*["']networkidle|waitUntil:\s*["']networkidle|\.waitForTimeout\(/;
   const bad = pw.filter((f) => PROXY.test(code(f))).map((f) => at(f, PROXY));

@@ -632,6 +632,17 @@ describe("a comment naming a tool is not a call", () => {
   });
 });
 
+describe("self-audit false positives", () => {
+  test("no package manifest: the dependency audit is n.a., not a FAIL", () => {
+    const r = auditV("base", { "bun.lock": null, "tools/cli/package.json": null, "tools/cli/package-lock.json": null });
+    expect(r.rows.get("audit-ungated")).toBe("n.a.");
+  });
+  test("a fixture STRING naming playwright and a fixed wait is not a Playwright file", () => {
+    const r = auditV("base", { "test/fixture.test.ts": 'const f = `import { chromium } from "playwright";\nawait page.waitForTimeout(400);`;\n' });
+    expect(r.rows.get("browser-wait-proxy")).toBe("pass");
+  });
+});
+
 describe("each check can fail", () => {
   for (const [id, files, gh, v = "base", opts] of MUTATIONS) {
     test(`${id} flips to FAIL (${v})`, () => {
