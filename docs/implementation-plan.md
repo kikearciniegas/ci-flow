@@ -28,7 +28,7 @@ flowchart LR
 - **Security scan** — DONE 2026-11-04: whole repository at `83a27c4`, medium effort, 0 findings, verified. One candidate (audited-repo text printed unchanged in the report) was rejected 3 of 3 as a false positive.
 - **Parallel `gh api` reads in the audit** — deferred (async rewrite).
 - **First rollout** — DONE 2026-11-04 on one private repo: 22 audit FAILs to 0 (45 pass) over two PRs; protection applied after the first merge, as the policy orders.
-- **Audit reads shell comments as job content** — OPEN. `runOf()` keeps `#` lines in `run:` blocks, so a comment containing "e2e" made `browser-job` FAIL on a cheap job. Fix: drop comment lines in `runOf()`, with a test fixture.
+- **Audit reads shell comments as job content** — DONE. `runOf()` kept `#` lines in `run:` blocks, so a comment containing "e2e" made `browser-job` FAIL on a cheap job. Fixed: `runOf()` drops comment lines; test "a comment naming a tool is not a call" covers `browser-job` and `toolchain-every-job`.
 
 ## Owner decisions
 
