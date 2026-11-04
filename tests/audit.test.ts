@@ -100,6 +100,19 @@ jobs:
           path: ~/.cache/ms-playwright
           key: pw
       - run: npx playwright test
+  warm-browsers:
+    if: \${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@${SHA} # v7
+        with:
+          node-version: 22.23.4
+      - uses: actions/cache@${SHA} # v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw
+      - run: npx playwright install chromium
 `,
   ".github/workflows/deploy.yml": `name: Deploy
 on:
@@ -548,6 +561,7 @@ const MUTATIONS: [string, Record<string, string | null>, Record<string, unknown>
   ["protection-matches-declared", { ".github/required-checks.json": `["cheap", "unit-count"]\n` }],
   ["toolchain-exact", mut(CI, "bun-version: 1.4.4", "bun-version: latest")],
   ["toolchain-exact", mut(CI, "node-version: 22.23.4", "node-version: 22")],
+  ["cache-default-branch", mut(CI, /  warm-browsers:\n[\s\S]*?npx playwright install chromium\n/, "")],
   ["toolchain-every-job", mut(CI, /    steps:\n      - uses: actions\/setup-node@[0-9a-f]+ # v7\n        with:\n          node-version: 22\.23\.4\n      - run: npm test/, "    steps:\n      - run: npm test")],
   ["toolchain-guard-test", { "test/toolchain.test.ts": null }],
   ["local-refuses-bun", mut("scripts/ci-local.sh", /\[ "\$\(bun --version\)"[^\n]*\n/, "")],
@@ -615,6 +629,17 @@ describe("a comment naming a tool is not a call", () => {
     const r = auditV("base", files);
     expect(r.rows.get("browser-job")).toBe("pass");
     expect(r.rows.get("toolchain-every-job")).toBe("pass");
+  });
+});
+
+describe("self-audit false positives", () => {
+  test("no package manifest: the dependency audit is n.a., not a FAIL", () => {
+    const r = auditV("base", { "bun.lock": null, "tools/cli/package.json": null, "tools/cli/package-lock.json": null });
+    expect(r.rows.get("audit-ungated")).toBe("n.a.");
+  });
+  test("a fixture STRING naming playwright and a fixed wait is not a Playwright file", () => {
+    const r = auditV("base", { "test/fixture.test.ts": 'const f = `import { chromium } from "playwright";\nawait page.waitForTimeout(400);`;\n' });
+    expect(r.rows.get("browser-wait-proxy")).toBe("pass");
   });
 });
 
