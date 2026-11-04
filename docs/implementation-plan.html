@@ -77,17 +77,19 @@ figure.diagram svg{height:auto}
 <tr><td>1</td><td>Single policy file, add-ons, audit, reminder hook</td><td><span class="badge b-done">DONE</span></td><td>tests pass</td></tr>
 <tr><td>2</td><td>Whole-codebase pass (audit, simplify, proofread, review)</td><td><span class="badge b-done">DONE</span></td><td>tests pass; skip list recorded</td></tr>
 <tr><td>3</td><td>Public repo, fresh single-commit history, MIT license</td><td><span class="badge b-done">DONE</span></td><td>gitleaks clean; no private names</td></tr>
-<tr><td>4</td><td>Harden this repo</td><td><span class="badge b-in-progress">IN PROGRESS</span></td><td><code>audit.ts --config-only</code></td></tr>
+<tr><td>4</td><td>Harden this repo</td><td><span class="badge b-done">DONE</span></td><td><code>audit.ts</code>: 43 pass, 0 fail (2026-11-04)</td></tr>
 <tr><td>5</td><td>Roll out to each repo, most expensive first</td><td><span class="badge b-in-progress">IN PROGRESS</span></td><td>per-repo audit before and after</td></tr>
 </tbody>
 </table>
 <h2 id="open-items"><a class="anchor" href="#open-items">#</a>Open items</h2>
 <ul>
-<li><strong>Branch protection on <code>main</code></strong> — <span class="badge b-done">DONE</span> 2026-11-04 (owner decision): PR required with 0 approvals, admins included, linear history, no force-push or deletion. No required checks until this repo has CI.</li>
-<li><strong>Dependabot config</strong> — <span class="badge b-tbd">TBD</span>. The repo has no workflows or dependencies yet, so the two Dependabot checks fail with nothing to update; add when CI arrives.</li>
-<li><strong>CI for this repo</strong> — <span class="badge b-tbd">TBD</span>. Tests run locally only (<code>bun test tests/</code>).</li>
+<li><strong>Branch protection on <code>main</code></strong> — <span class="badge b-done">DONE</span> 2026-11-04 (owner decision): PR required with 0 approvals, admins included, linear history, no force-push or deletion. Required check <code>checks</code> added after CI landed, applied by <code>scripts/protect-main.sh</code> and read back.</li>
+<li><strong>Dependabot config</strong> — <span class="badge b-done">DONE</span> 2026-11-04: github-actions, weekly, grouped (the repo has no package manifest).</li>
+<li><strong>CI for this repo</strong> — <span class="badge b-done">DONE</span> 2026-11-04: one cheap job <code>checks</code> (range gitleaks, <code>bun test tests/</code>) on every PR event and <code>main</code> push; bun pinned exactly and guarded by <code>tests/ci-workflow.test.ts</code>.</li>
 <li><strong>Security scan</strong> — <span class="badge b-done">DONE</span> 2026-11-04: whole repository at <code>83a27c4</code>, medium effort, 0 findings, verified. One candidate (audited-repo text printed unchanged in the report) was rejected 3 of 3 as a false positive.</li>
 <li><strong>Parallel <code>gh api</code> reads in the audit</strong> — deferred (async rewrite).</li>
+<li><strong>Caches the default branch never writes</strong> — <span class="badge b-done">DONE</span> 2026-11-04: new audit check <code>cache-default-branch</code> and the SKILL.md rule; the first rollout repo now shows it as its one FAIL (two PR-only caches), for its own session to fix.</li>
+<li><strong>Self-audit false positives</strong> — <span class="badge b-done">DONE</span> 2026-11-04: <code>audit-ungated</code> is n.a. without a package manifest; <code>browser-wait-proxy</code> counts only files that import Playwright.</li>
 <li><strong>First rollout</strong> — <span class="badge b-done">DONE</span> 2026-11-04 on one private repo: 22 audit FAILs to 0 (45 pass) over two PRs; protection applied after the first merge, as the policy orders.</li>
 <li><strong>Audit reads shell comments as job content</strong> — <span class="badge b-done">DONE</span>. <code>runOf()</code> kept <code>#</code> lines in <code>run:</code> blocks, so a comment containing &quot;e2e&quot; made <code>browser-job</code> FAIL on a cheap job. Fixed: <code>runOf()</code> drops comment lines; test &quot;a comment naming a tool is not a call&quot; covers <code>browser-job</code> and <code>toolchain-every-job</code>.</li>
 </ul>
