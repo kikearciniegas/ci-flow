@@ -9,7 +9,8 @@ Internal skill. The rules live in `POLICY.md` beside this file (the one
 source; CLAUDE.md and AGENTS.md point to it): read it first. This file
 carries the reference design that implements them, the procedure, and the
 audit. Two production repositories run this
-design (called project A and project B below); the audit's test fixture
+design in full (called project A and project B below), a third the base flow
+(cheap job, gated expensive jobs, protect script, gate test); the audit's test fixture
 (`../../tests/audit.test.ts` from this directory, `BASE`) is the smallest
 complete example of it.
 
@@ -77,6 +78,7 @@ decision, written beside the change.
 - Skip at JOB level, never step level, in an expensive job — a job whose steps all skip still bills a runner.
 - A matrix job with an `if:` is never a required check; an aggregate job (`needs` it, `if: always() && needs.<m>.result != 'skipped'`, fails unless every leg succeeded) is [matrix-aggregate] — a skipped matrix reports ONE check under its unexpanded name.
 - Browser job: PR-only, path-scoped, browsers cached on the playwright version [browser-job]; every `bun install` job caches `~/.bun/install/cache` [install-cache].
+- A cache pays only if the default branch writes it [cache-default-branch]: a PR restores from its own ref and the default branch, never from another PR, so a cache saved only by PR-gated jobs is a fresh download and a fresh copy on every PR (2026-11-04: a 279 MB browser cache and ~17 × 115 MB tool caches, one per PR ref, none ever restored elsewhere). Let a push-only job on the default branch restore and save it (`if: github.event_name == 'push'`, the install step only, no tests; ~1 billed minute per push, so it pays when PR misses cost more), or accept the miss and say so. Key on the tool version; a key on tree content gets `restore-keys` with the version prefix.
 - Browser tests wait for the CONDITION, never a proxy: no `networkidle`, no `waitForTimeout(n)` [browser-wait-proxy]. A hydration gate waits for the framework's own marker and is proven by a scripts-off page on which it must time out.
 
 **Required checks**

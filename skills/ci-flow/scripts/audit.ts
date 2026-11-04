@@ -493,7 +493,9 @@ check("expensive-gated", () => {
 });
 check("browser-job", () => {
   const ci = needCI();
-  const b = ciJobs.filter((x) => BROWSER.test(runOf(x.j)));
+  // A push-only job that only warms the browser cache runs no tests (cache-default-branch).
+  const pushOnly = (x: Job) => /event_name\s*==\s*['"]push['"]/.test(ifOf(x.j)) && !PR_EVENT.test(ifOf(x.j));
+  const b = ciJobs.filter((x) => BROWSER.test(runOf(x.j)) && !pushOnly(x));
   if (!b.length) return na("no browser job");
   const bad = b.flatMap((x) => {
     const m: string[] = [];
@@ -509,6 +511,30 @@ check("install-cache", () => {
     !caches(x, /\.bun\/install\/cache/)).map((x) => x.id);
   if (!ciJobs.some((x) => /\bbun install\b/.test(runOf(x.j)))) return na("no bun install in CI");
   return bad.length ? fail(`${CI!.path}: bun install without a ~/.bun/install/cache cache in ${bad.join(", ")}`) : pass("every bun install job caches ~/.bun/install/cache");
+});
+// A cache is ref-scoped: a PR restores from its own ref and the default branch,
+// never from another PR. A cache saved only by PR-gated jobs is a fresh download
+// on every PR (a sibling repo, 2026-11-04: 279 MB of browsers, ~17 x 115 MB of
+// tool caches, one per PR ref). Steps that save: actions/cache, and setup-*
+// with `cache:` / `enable-cache:`.
+// shortcut: a job counts as running on the push when its `if:` is empty or names
+// push / github.ref; a job gated another way is not seen as a writer.
+const cacheIdOf = (s: any): string | undefined => {
+  const u = String(s?.uses ?? "").replace(/@.*/, "");
+  if (u === "actions/cache" || u === "actions/cache/save") return String(s?.with?.path ?? "").trim() || undefined;
+  if (/\/setup-/.test(u) && (s?.with?.cache || s?.with?.["enable-cache"])) return u;
+  return undefined;
+};
+check("cache-default-branch", () => {
+  const ci = needCI();
+  const cached = ciJobs.flatMap((x) => stepsOf(x.j).map(cacheIdOf).filter(Boolean).map((id) => ({ id: id!, job: x })));
+  if (!cached.length) return na("no cache step in CI");
+  const onPush = (x: Job) => "push" in ci.on && (!ifOf(x.j) || /\bpush\b|github\.ref\b/.test(ifOf(x.j)));
+  const writers = new Set(cached.filter((c) => onPush(c.job)).map((c) => c.id));
+  const bad = [...new Set(cached.filter((c) => !writers.has(c.id)).map((c) => `${c.job.id}: ${c.id}`))];
+  return bad.length
+    ? fail(`${ci.path}: saved only by PR-gated jobs, so no other PR can restore it: ${firstN(bad, 4, "; ")}`)
+    : pass(`every cache is also written on the ${defaultBranch} push`);
 });
 // 9. A gated matrix is never a required check; an always() aggregate stands in.
 check("matrix-aggregate", () => {

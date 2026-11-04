@@ -100,6 +100,19 @@ jobs:
           path: ~/.cache/ms-playwright
           key: pw
       - run: npx playwright test
+  warm-browsers:
+    if: \${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@${SHA} # v7
+        with:
+          node-version: 22.23.4
+      - uses: actions/cache@${SHA} # v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw
+      - run: npx playwright install chromium
 `,
   ".github/workflows/deploy.yml": `name: Deploy
 on:
@@ -548,6 +561,7 @@ const MUTATIONS: [string, Record<string, string | null>, Record<string, unknown>
   ["protection-matches-declared", { ".github/required-checks.json": `["cheap", "unit-count"]\n` }],
   ["toolchain-exact", mut(CI, "bun-version: 1.4.4", "bun-version: latest")],
   ["toolchain-exact", mut(CI, "node-version: 22.23.4", "node-version: 22")],
+  ["cache-default-branch", mut(CI, /  warm-browsers:\n[\s\S]*?npx playwright install chromium\n/, "")],
   ["toolchain-every-job", mut(CI, /    steps:\n      - uses: actions\/setup-node@[0-9a-f]+ # v7\n        with:\n          node-version: 22\.23\.4\n      - run: npm test/, "    steps:\n      - run: npm test")],
   ["toolchain-guard-test", { "test/toolchain.test.ts": null }],
   ["local-refuses-bun", mut("scripts/ci-local.sh", /\[ "\$\(bun --version\)"[^\n]*\n/, "")],
