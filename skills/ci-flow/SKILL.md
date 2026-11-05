@@ -49,7 +49,7 @@ are add-ons, declared per repo in `.github/ci-flow.json`
 A check of an add-on the file does not list reports n.a.; [addons-declared]
 fails on an unknown add-on name, and on a repo whose tree needs an add-on it
 did not declare (a browser/e2e or draft-gated job without `gated-expensive`,
-a deploy workflow without `deploy`) — the declaration never hides a job that
+a deploy workflow without `deploy`, a job whose outputs gate other jobs with neither `classifier` nor `gated-expensive`) — the declaration never hides a job that
 is there. No file = the full design is audited.
 
 ## The reference design (audit check ids in brackets)

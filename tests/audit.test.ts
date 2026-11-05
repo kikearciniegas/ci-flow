@@ -485,12 +485,13 @@ describe("plan × visibility × project needs", () => {
     const all = audit({ ".github/ci-flow.json": '{"addons": ["gated-expensive", "classifier", "local-stamps", "deploy"]}' });
     expect(all.rows.get("addons-declared")).toBe("pass");
     expect([...all.rows].filter(([, s]) => s === "fail")).toEqual([]);
-    const narrow = audit({ ".github/ci-flow.json": '{"addons": ["gated-expensive", "deploy"]}' });
+    // The fixture has a classifier, so `classifier` must stay declared (addons-declared).
+    const narrow = audit({ ".github/ci-flow.json": '{"addons": ["gated-expensive", "classifier", "deploy"]}' });
     expect(narrow.rows.get("addons-declared")).toBe("pass");
-    for (const id of ["classifier-tracked", "hook-tiers", "stamp-covers-suite", "local-refuses-node"]) expect(narrow.rows.get(id)).toBe("n.a.");
+    for (const id of ["mark-ready-gate", "hook-tiers", "stamp-covers-suite", "local-refuses-node"]) expect(narrow.rows.get(id)).toBe("n.a.");
     for (const id of ["expensive-gated", "deploy-split", "timeouts", "cheap-secret-scan"]) expect(narrow.rows.get(id)).toBe("pass");
     // n.a. by declaration still lets a real defect elsewhere through
-    const broken = audit({ ".github/ci-flow.json": '{"addons": ["gated-expensive", "deploy"]}', ...mut(CI, "    timeout-minutes: 5\n", "") });
+    const broken = audit({ ".github/ci-flow.json": '{"addons": ["gated-expensive", "classifier", "deploy"]}', ...mut(CI, "    timeout-minutes: 5\n", "") });
     expect(broken.rows.get("timeouts")).toBe("fail");
   });
   test("printed fixes quote a hostile branch name and drop a hostile action name", () => {
@@ -646,9 +647,76 @@ describe("a comment naming a tool is not a call", () => {
   });
 });
 
+describe("false results found by an outside review (2026-11-05)", () => {
+  const SCAN = /      - name: secret scan\n[\s\S]*?--log-opts="\$RANGE" \.\n/;
+  const scanWf = (on: string) => ({ ".github/workflows/secret-scan.yml": `name: secret scan
+on:
+${on}
+permissions:
+  contents: read
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+${BASE[CI].match(SCAN)![0]}` });
+  test("a cache written by a job that runs on every event (!cancelled()) is written on the push", () => {
+    const r = auditV("base", mut(CI, "if: \${{ github.event_name == 'push' }}", "if: \${{ !cancelled() }}"));
+    expect(r.rows.get("cache-default-branch")).toBe("pass");
+  });
+  test("control: a job excluded from the push (event_name != 'push') writes no default-branch cache", () => {
+    const r = auditV("base", mut(CI, "if: \${{ github.event_name == 'push' }}", "if: \${{ github.event_name != 'push' }}"));
+    expect(r.rows.get("cache-default-branch")).toBe("fail");
+  });
+  test("the range secret scan may live in its own PR-triggered workflow", () => {
+    const r = auditV("base", { ...mut(CI, SCAN, ""), ...scanWf("  push:\n    branches: [main]\n  pull_request:") });
+    expect(r.rows.get("cheap-secret-scan")).toBe("pass");
+  });
+  test("control: a secret scan in a manual-only workflow does not count", () => {
+    const r = auditV("base", { ...mut(CI, SCAN, ""), ...scanWf("  workflow_dispatch:") });
+    expect(r.rows.get("cheap-secret-scan")).toBe("fail");
+  });
+  test("a dependency audit in a job gated on the docs scope is gated", () => {
+    const files = mut(CI, "      - run: bun audit\n  unit:\n", `  deps:
+    needs: cheap
+    if: \${{ needs.cheap.outputs.scope != 'docs' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: bun audit
+  unit:
+`);
+    expect(auditV("base", files).rows.get("audit-ungated")).toBe("fail");
+  });
+  test("a Python audit (pip-audit) is recognised, and judged, without a JavaScript manifest", () => {
+    const noJs = { "bun.lock": null, "tools/cli/package.json": null, "tools/cli/package-lock.json": null, "requirements.txt": "requests==2.32.0\n" };
+    const ok = mut(CI, "      - run: bun audit\n", "      - run: uvx pip-audit -r requirements.txt\n");
+    expect(auditV("base", { ...noJs, ...ok }).rows.get("audit-ungated")).toBe("pass");
+    const gated = mut(CI, "      - run: bun audit\n", "      - if: github.event_name == 'pull_request'\n        run: uvx pip-audit -r requirements.txt\n");
+    expect(auditV("base", { ...noJs, ...gated }).rows.get("audit-ungated")).toBe("fail");
+    const none = mut(CI, "      - run: bun audit\n", "");
+    expect(auditV("base", { ...noJs, ...none }).rows.get("audit-ungated")).toBe("fail");
+  });
+  test("no PR-triggered workflow: ci-red-rate names that, never an empty workflow path", () => {
+    const r = auditV("base", mut(CI, /  pull_request:\n    types: \[[^\]]*\]\n/, "  workflow_dispatch:\n"));
+    expect(r.rows.get("ci-red-rate")).toBe("fail");
+    expect(r.out).not.toContain("workflows//");
+    expect(r.out).toContain("no workflow with a pull_request trigger");
+  });
+  test("a gating output without gated-expensive is a classifier, and must be declared", () => {
+    const decl = (a: string[]) => ({ ".github/ci-flow.json": JSON.stringify({ addons: a }) });
+    const bare = auditV("base", decl(["local-stamps", "deploy"]));
+    expect(bare.rows.get("addons-declared")).toBe("fail");
+    expect(bare.out).toContain("classifier is not declared");
+    // gated-expensive brings its own scope output: no classifier is demanded for it.
+    expect(auditV("base", decl(["gated-expensive", "local-stamps", "deploy"])).rows.get("addons-declared")).toBe("pass");
+  });
+});
+
 describe("self-audit false positives", () => {
   test("no package manifest: the dependency audit is n.a., not a FAIL", () => {
-    const r = auditV("base", { "bun.lock": null, "tools/cli/package.json": null, "tools/cli/package-lock.json": null });
+    // No manifest AND no audit step; an audit step that exists is judged (outside review, 2026-11-05).
+    const r = auditV("base", { "bun.lock": null, "tools/cli/package.json": null, "tools/cli/package-lock.json": null, ...mut(CI, "      - run: bun audit\n", "") });
     expect(r.rows.get("audit-ungated")).toBe("n.a.");
   });
   test("a fixture STRING naming playwright and a fixed wait is not a Playwright file", () => {
