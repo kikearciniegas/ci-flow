@@ -509,7 +509,14 @@ check("toolchain-exact", () => {
 // without setup-node runs the runner image's node, which moves when GitHub
 // updates the image (a sibling repo, 2026-11-01: pinned in browser, floating in checks
 // and integration, and toolchain-exact passed).
-// shortcut: reads `run:` text only, so node called from inside a script is not seen.
+// The tracked shell scripts a `run:` names are read too (a sibling repo, 2026-11-05:
+// deploy-scope.sh called `node scope.mjs` with no pin and the check passed).
+// shortcut: one level only, by path as written in the step; a script reached through
+// another script, a variable or a working-directory prefix is not seen.
+const SCRIPT_REF = /(?:^|[\s;&|(])(?:\.\/)?([\w./-]+\.(?:sh|bash))\b/gm;
+// Scripts carry prose in quotes (test labels, messages): quoted text is dropped unless it runs a `$(…)`.
+const scriptCode = (p: string) => stripShellComments(show(p) ?? "").replace(/"[^"\n]*"|'[^'\n]*'/g, (q) => (q.startsWith('"') && q.includes("$(") ? q : '""'));
+const calledScripts = (t: string) => [...new Set([...t.matchAll(SCRIPT_REF)].map((m) => m[1]))].filter((p) => TRACKED.has(p));
 const INVOKES = { node: /(^|[\s;&|(`$])(node|npm|npx)\s/m, bun: /(^|[\s;&|(`$])(bun|bunx)\s/m } as const;
 check("toolchain-every-job", () => {
   const bad: string[] = [], seen: string[] = [];
@@ -517,8 +524,9 @@ check("toolchain-every-job", () => {
     if (!pins(key).length) continue;
     seen.push(tool);
     for (const w of WFS) for (const x of jobsOf(w)) {
-      if (!INVOKES[tool].test(runOf(x.j))) continue;
-      if (!stepsOf(x.j).some((s) => s?.with?.[key] != null)) bad.push(`${w.path}#${x.id} runs ${tool} without ${key}`);
+      const own = runOf(x.j), via = calledScripts(own).filter((p) => INVOKES[tool].test(scriptCode(p)));
+      if (!INVOKES[tool].test(own) && !via.length) continue;
+      if (!stepsOf(x.j).some((s) => s?.with?.[key] != null)) bad.push(`${w.path}#${x.id} runs ${tool}${INVOKES[tool].test(own) ? "" : ` (via ${via.join(", ")})`} without ${key}`);
     }
   }
   if (!seen.length) return na("nothing pinned");
@@ -650,10 +658,16 @@ check("dependabot-actions-grouped", () => {
   return u.groups && Object.keys(u.groups).length ? pass(`${dbPath}: github-actions grouped`) : fail(`${at(dbPath!, /github-actions/)}: github-actions not grouped (one full CI run per action bump)`);
 });
 // A dismissal with no reason is a suppression: nobody can tell later whether it
-// was a decision or a click. shortcut: first 100 dismissed alerts only.
+// was a decision or a click. A full first page means there may be more: read them all.
 check("alert-dismissal-reason", () => {
   if (!slug) throw new Error(ghError);
-  const ds: any[] = gh(`repos/${slug}/dependabot/alerts?state=dismissed&per_page=100`);
+  const path = `repos/${slug}/dependabot/alerts?state=dismissed&per_page=100`;
+  let ds: any[] = gh(path);
+  if (ds.length === 100) {
+    const r = run("gh", ["api", "--paginate", "--slurp", path]);
+    if (!r.ok) throw new Error(`gh api --paginate ${path}: ${r.err.trim().split("\n")[0] || "failed"}`);
+    ds = JSON.parse(r.out).flat();
+  }
   const bare = ds.filter((a) => !String(a?.dismissed_comment ?? "").trim()).map((a) => `#${a.number} ${a.dependency?.package?.name ?? ""}`.trim());
   if (!ds.length) return pass("no dismissed alerts");
   return bare.length ? fail(`${bare.length} of ${ds.length} dismissed alert(s) carry no reason: ${bare.slice(0, 5).join(", ")}`) : pass(`${ds.length} dismissed alert(s), each with a reason`);
