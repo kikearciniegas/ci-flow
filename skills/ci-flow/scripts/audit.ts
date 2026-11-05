@@ -28,8 +28,10 @@
  * (a dead string naming `--local-env-vars` counts). The repository's own
  * behavioural tests prove behaviour; this audit proves the design is present.
  */
-import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { Blocked, ghGet, prefetch, run, type GhRes } from "./lib/gh.ts";
+import { ownerReport } from "./lib/owner.ts";
+import { capsFor, minutesOf, planOf, QUOTA, randomName } from "./lib/plans.ts";
 
 type Status = "pass" | "fail" | "n.a." | "blocked";
 type Section = "ci" | "config";
@@ -54,150 +56,9 @@ for (let i = 0; i < argv.length; i++) {
 }
 if (!repoPath && !ownerArg) usage(2);
 
-const run = (cmd: string, args: string[]) => {
-  const r = spawnSync(cmd, args, { encoding: "utf8", maxBuffer: 1 << 28 });
-  return { ok: r.status === 0, out: r.stdout ?? "", err: (r.stderr ?? "") + (r.error ? String(r.error) : "") };
-};
 const git = (...a: string[]) => run("git", ["-C", repoPath, ...a]);
 
-/** `gh api` answers fetched in parallel before the checks ask (speed only: any other path is fetched when asked). */
-const prefetched = new Map<string, { ok: boolean; out: string; err: string }>();
-const prefetch = (paths: string[]) => Promise.all(paths.filter((p) => !prefetched.has(p)).map(async (p) => {
-  try {
-    const c = Bun.spawn(["gh", "api", p], { stdout: "pipe", stderr: "pipe" });
-    const [out, err, code] = await Promise.all([new Response(c.stdout).text(), new Response(c.stderr).text(), c.exited]);
-    prefetched.set(p, { ok: code === 0, out, err });
-  } catch { /* left to the synchronous call, which reports the error */ }
-}));
-/** A plan refusing a feature: reported as `blocked`, never as pass or as an unknown. */
-class Blocked extends Error {}
-type GhRes = { ok: true; data: any } | { ok: false; kind: "blocked" | "missing" | "error"; msg: string };
-/** GET that keeps the REASON of a refusal: the plan, a 404, or anything else (unknown). */
-const ghGet = (path: string): GhRes => {
-  const r = prefetched.get(path) ?? run("gh", ["api", path]);
-  if (r.ok) { try { return { ok: true, data: r.out.trim() ? JSON.parse(r.out) : null }; } catch { return { ok: true, data: r.out }; } }
-  const all = `${r.err}\n${r.out}`;
-  const msg = `gh api ${path}: ${r.err.trim().split("\n")[0] || "failed"}`;
-  if (/Upgrade to GitHub|make this repository public to enable/i.test(all)) return { ok: false, kind: "blocked", msg };
-  return { ok: false, kind: /HTTP 404|"status":\s*"404"/.test(all) ? "missing" : "error", msg };
-};
-
-// ------------------------------------------------------------ plan knowledge
-// What each GitHub plan gives a repo of each visibility (GitHub docs, checked
-// 2026-11-02). Repositories and collaborators are UNLIMITED on every plan,
-// public and private; what differs is the features a PRIVATE repo gets, and the
-// Actions minutes and Packages storage it draws on. A public repo gets every
-// feature below free, and standard-runner minutes free.
-type Plan = "free" | "pro" | "team" | "enterprise";
-const planOf = (n: unknown): Plan | undefined => {
-  const s = String(n ?? "").toLowerCase();
-  return s === "free" || s === "pro" || s === "team" ? s : /enterprise|business/.test(s) ? "enterprise" : undefined;
-};
-const QUOTA: Record<Plan, number> = { free: 2000, pro: 3000, team: 3000, enterprise: 50000 }; // Linux min/month, private repos
-const PACKAGES_GB: Record<Plan, number> = { free: 0.5, pro: 2, team: 2, enterprise: 50 };
-const capsFor = (plan: Plan | undefined, pub: boolean) => {
-  const paid = plan === "pro" || plan === "team" || plan === "enterprise", orgPaid = plan === "team" || plan === "enterprise";
-  return {
-    protection: pub || paid, // branch protection + rulesets
-    environments: pub || paid, // environments, environment secrets, deployment branch policies
-    envReviewers: pub || plan === "enterprise", // required reviewers / wait timers on environments
-    secretScanning: pub ? "included" : orgPaid ? "a paid add-on (Secret Protection)" : "not available",
-    codeql: pub ? "included" : orgPaid ? "a paid add-on (Code Security)" : "not available",
-    privateReporting: pub,
-  };
-};
-/** This month's Actions Linux minutes of an owner, its budget, and the 80% warning line. Throws when billing is unreadable. */
-function minutesOf(owner: string, isOrg: boolean, plan: Plan) {
-  const now = new Date(), y = now.getUTCFullYear(), m = now.getUTCMonth() + 1;
-  const u = ghGet(`${isOrg ? "orgs" : "users"}/${owner}/settings/billing/usage?year=${y}&month=${m}`);
-  if (!u.ok) throw new Error(`${u.msg}${isOrg ? "" : " (needs: gh auth refresh -h github.com -s user)"}`);
-  // Minutes only: the same report carries Actions STORAGE, which is not minutes.
-  const items = (u.data?.usageItems ?? []).filter((i: any) => /^actions[ _]linux$/i.test(String(i.sku)));
-  const sum = (xs: any[]) => Math.round(xs.reduce((s, i) => s + Number(i.quantity ?? 0), 0));
-  const total = sum(items), quota = QUOTA[plan];
-  const spent = items.reduce((s: number, i: any) => s + Number(i.netAmount ?? 0), 0); // US$ billed beyond the included minutes
-  let budget: number | undefined;
-  if (isOrg) {
-    const b = ghGet(`orgs/${owner}/settings/billing/budgets`);
-    if (b.ok) budget = (b.data?.budgets ?? []).find((x: any) => [x.budget_product_sku, x.budget_product_skus].flat().includes("actions"))?.budget_amount;
-  }
-  const day = now.getUTCDate(), days = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  const pct = Math.round((100 * total) / quota), projected = Math.round((total / day) * days);
-  const reset = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
-  const line = `${isOrg ? "org" : "account"} ${total} of ${quota} included Linux min (${pct}%), ${Math.max(0, quota - total)} remaining until ${reset}` +
-    `${budget != null ? `, Actions budget US$${budget}` : ""}`;
-  // Past 80% the numbers that decide the rest of the month get their own line, above the tables' noise.
-  const warn = total < 0.8 * quota ? "" :
-    `Actions minutes ${pct}% used: ${total} of ${quota} included (${isOrg ? "org" : "account"} ${owner}), ${Math.max(0, quota - total)} remaining until ${reset}; ` +
-    `at this pace ${projected} by month end` +
-    (budget != null ? `; budget US$${budget}, US$${spent.toFixed(2)} spent, US$${Math.max(0, budget - spent).toFixed(2)} left before Actions stops`
-      : `; no Actions budget — Actions stops at ${quota}`);
-  return { month: `${y}-${String(m).padStart(2, "0")}`, total, quota, budget, line, warn,
-    byRepo: (name: string) => sum(items.filter((i: any) => i.repositoryName === name)) };
-}
-// Naming lifecycle (POLICY.md §2 "Names leak too"): while private and in
-// development a repo carries a random name unrelated to the product, client or
-// folder; once public, the product name is out anyway, so the repo takes it.
-const ADJ = ["amber", "brisk", "cobalt", "dusty", "ember", "fabled", "gentle", "hollow", "ivory", "jolly", "keen", "lunar", "misty", "noble", "opal", "quiet", "rustic", "silver", "tidal", "velvet"];
-const NOUN = ["badger", "canyon", "delta", "falcon", "glacier", "harbor", "island", "juniper", "kettle", "lantern", "meadow", "nebula", "orchid", "pebble", "quarry", "river", "summit", "thistle", "willow", "zephyr"];
-const pick = (a: string[]) => a[Math.floor(Math.random() * a.length)];
-const randomName = () => `${pick(ADJ)}-${pick(NOUN)}-${100 + Math.floor(Math.random() * 900)}`;
-
-// ------------------------------------------------- --owner: before creating a repo
-// What the owner's plan allows a NEW repo, how many repos exist, and this
-// month's minutes. Repository slots are unlimited on every plan, so "slots
-// available" is reported as such rather than as a number GitHub never enforces.
-if (ownerArg) {
-  const who = ghGet(`users/${ownerArg}`);
-  if (!who.ok) { console.error(who.msg); process.exit(2); }
-  const isOrg = who.data?.type === "Organization";
-  const det = isOrg ? ghGet(`orgs/${ownerArg}`) : ghGet("user");
-  const d = det.ok && (isOrg || det.data?.login === ownerArg) ? det.data : undefined;
-  const list = run("gh", ["repo", "list", ownerArg, "--limit", "1000", "--json", "name,visibility,isArchived,defaultBranchRef"]);
-  const repos: any[] = list.ok ? JSON.parse(list.out) : [];
-  let plan = planOf(d?.plan?.name), src = plan ? "GitHub" : "";
-  if (!plan) { // A private repo's protection answers it: refused with an upgrade message = Free; readable or "not protected" = paid.
-    const p = repos.find((r) => r.visibility !== "PUBLIC" && r.defaultBranchRef?.name);
-    if (p) {
-      const pr = ghGet(`repos/${ownerArg}/${p.name}/branches/${p.defaultBranchRef.name}/protection`);
-      plan = !pr.ok && pr.kind === "blocked" ? "free" : pr.ok || pr.kind === "missing" ? (isOrg ? "team" : "pro") : undefined;
-      if (plan) src = `inferred from ${p.name}'s branch protection`;
-    }
-  }
-  const nPub = repos.filter((r) => r.visibility === "PUBLIC").length, nPriv = repos.length - nPub, nArch = repos.filter((r) => r.isArchived).length;
-  const lim = Number(d?.plan?.private_repos);
-  const slots = Number.isFinite(lim) && lim > 0 && lim < 100000 ? `${Math.max(0, lim - nPriv)} private slot(s) left of ${lim}` : "unlimited on every plan";
-  const priv = capsFor(plan, false), pub = capsFor(plan, true), yn = (b: boolean) => (b ? "yes" : "**no**");
-  console.log(`ci-flow: before creating a repository under ${ownerArg} (${isOrg ? "organization" : "user"})\n`);
-  console.log(`Plan: ${plan ?? "unknown"}${src ? ` (${src})` : ""}${isOrg && d?.plan ? `, seats ${d.plan.filled_seats}/${d.plan.seats}` : ""}`);
-  console.log(`Repositories: ${list.ok ? `${nPub} public, ${nPriv} private (${nArch} archived)` : `not listed: ${list.err.trim().split("\n")[0]}`}; slots: ${slots}`);
-  if (isOrg && d) console.log(`Members may create: public repos ${d.members_can_create_public_repositories ? "YES (see org-baseline)" : "no"}, private repos ${d.members_can_create_private_repositories ? "yes" : "no"}`);
-  console.log(`\n| What a new repo gets | private | public |\n|---|---|---|`);
-  const P = plan ?? "?";
-  for (const [k, a, b] of [
-    ["branch protection / rulesets", yn(priv.protection), yn(pub.protection)],
-    ["environments + environment secrets", yn(priv.environments), yn(pub.environments)],
-    ["environment reviewers / wait timers", yn(priv.envReviewers), yn(pub.envReviewers)],
-    ["secret scanning + push protection", priv.secretScanning, pub.secretScanning],
-    ["CodeQL code scanning", priv.codeql, pub.codeql],
-    ["private vulnerability reporting", yn(priv.privateReporting), yn(pub.privateReporting)],
-    ["Dependabot alerts + security updates", "yes", "yes"],
-    ["Actions minutes (standard Linux)", plan ? `${QUOTA[plan]}/month${isOrg ? ", shared by the org" : ", shared by the account"}` : P, "free"],
-    ["Packages storage", plan ? `${PACKAGES_GB[plan]} GB` : P, "free"],
-  ]) console.log(`| ${k} | ${a} | ${b} |`);
-  let warn = "";
-  if (plan) {
-    try { const u = minutesOf(ownerArg, isOrg, plan); console.log(`\nActions this month (${u.month}): ${u.line}`); warn = u.warn; }
-    catch (e) { console.log(`\nActions this month: not readable — ${(e as Error).message}`); }
-  } else console.log(`\nPlan not readable: ${isOrg ? "an org-owner token is needed" : "gh auth refresh -h github.com -s user"}`);
-  if (warn) console.log(`\n**${warn}**`);
-  const name = randomName();
-  console.log(`\nSuggested (nothing was created):\n- gh repo create ${ownerArg}/${name} --private   # a random development name; no product, client or folder name until launch` +
-    `\n- after the first push: bun ~/.claude/skills/ci-flow/scripts/audit.ts <clone> --config-only   # baseline + hardening commands` +
-    `\n- at launch, when it goes public: gh repo rename <product-name> -R ${ownerArg}/${name}` +
-    (!plan || priv.protection ? "" : `\n- on ${plan}, a private repo gets no protection and no environments: if it will deploy or gate merges on CI, create it under the Team org instead`));
-  process.exit(0);
-}
+if (ownerArg) ownerReport(ownerArg);
 
 const ls = git("ls-tree", "-r", "--name-only", ref);
 if (!ls.ok) { console.error(`cannot read ${ref} in ${repoPath}: ${ls.err.trim()}`); process.exit(2); }
@@ -869,7 +730,7 @@ check("plan-minutes", () => {
   return pass(ev);
 });
 
-// Naming lifecycle: see randomName above.
+// Naming lifecycle: see randomName in lib/plans.ts.
 // shortcut: a name is "random-looking" by shape only (adjective-noun-digits, or a
 // letters-hex id); a meaningful private name that is not a folder label passes —
 // whether it leaks the product is the owner's call, not a regex's.

@@ -24,7 +24,9 @@ ln -s "$PWD/skills/ci-flow" ~/.claude/skills/ci-flow
 | `skills/ci-flow/references/lessons.md` | every failure found so far: symptom, cause, guard |
 | `skills/ci-flow/references/porting.md` | files, renames, order and verification for a new repo |
 | `skills/ci-flow/scripts/audit.ts` | the audit (`bun`) |
+| `skills/ci-flow/scripts/lib/` | its parts: `gh.ts` (process and `gh api` GETs, fetched in parallel), `plans.ts` (what each GitHub plan gives a repo, minutes), `owner.ts` (`--owner`) |
 | `tests/audit.test.ts` | falsification suite: a fixture that passes every check, one mutation per check that must fail it |
+| `tests/ci-workflow.test.ts` | this repo's own `ci.yml` keeps the rules the audit checks (each with a negative control) |
 | `tests/trigger.test.ts` | the hook fires on real state-changing commands and stays silent on read-only ones |
 
 ## Audit
