@@ -153,6 +153,9 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-node@${SHA} # v7
+        with:
+          node-version: 22.23.4
       - id: s
         run: echo "scope=$(sh scripts/deploy-scope.sh "$LIVE" "$SHA")" >> "$GITHUB_OUTPUT"
   deploy:
@@ -274,6 +277,9 @@ const GH_BASE: Record<string, unknown> = {
 const FAKE_GH = `#!/bin/sh
 echo "$*" >> "$GH_DIR/calls.log"
 if [ "$1" = repo ] && [ "$2" = list ]; then cat "$GH_DIR/repolist.json" 2>/dev/null || exit 1; exit 0; fi
+if [ "$1" = api ] && [ "$2" = --paginate ] && [ "$3" = --slurp ]; then
+  case "$4" in *dependabot/alerts*) cat "$GH_DIR/alertsAll.json" 2>/dev/null || exit 1; exit 0 ;; *) exit 9 ;; esac
+fi
 [ "$1" = api ] && [ $# -eq 2 ] || exit 9
 case "$2" in
   repos/o/r) f=repo ;;
@@ -736,5 +742,38 @@ describe("each check can fail", () => {
     const covered = new Set(MUTATIONS.map(([id]) => id));
     const ids = new Set(Object.values(REF).flatMap((r) => [...r.rows.keys()]));
     expect([...ids].filter((id) => !covered.has(id))).toEqual([]);
+  });
+});
+
+describe("limits closed (2026-11-05)", () => {
+  const unpinScope = () => mut(DEP, /persist-credentials: false\n      - uses: actions\/setup-node@[0-9a-f]+ # v7\n        with:\n          node-version: 22\.23\.4\n/, "persist-credentials: false\n");
+  test("node run by a tracked script the step calls needs the pin too", () => {
+    const r = auditV("base", unpinScope());
+    expect(r.rows.get("toolchain-every-job")).toBe("fail");
+    expect(r.out).toContain("deploy-scope runs node (via scripts/deploy-scope.sh) without node-version");
+  });
+  test("control: a called script that names node only in a comment needs no pin", () => {
+    const r = auditV("base", { ...unpinScope(), "scripts/deploy-scope.sh": "#!/bin/sh\n# node scope.mjs used to run here\necho deploy\n" });
+    expect(r.rows.get("toolchain-every-job")).toBe("pass");
+  });
+  test("control: a called script that names npm only inside a quoted message needs no pin", () => {
+    const r = auditV("base", { ...unpinScope(), "scripts/deploy-scope.sh": "#!/bin/sh\necho \"run npm ci first\" >&2\necho 'or node x'\necho deploy\n" });
+    expect(r.rows.get("toolchain-every-job")).toBe("pass");
+  });
+  test("a call inside a quoted command substitution still counts", () => {
+    const r = auditV("base", { ...unpinScope(), "scripts/deploy-scope.sh": "#!/bin/sh\ncase \"$(node scope.mjs \"$1\")\" in docs) echo skip ;; *) echo deploy ;; esac\n" });
+    expect(r.rows.get("toolchain-every-job")).toBe("fail");
+  });
+  const alert = (i: number, why = "tolerable: dev only") => ({ number: i, dependency: { package: { name: `p${i}` } }, dismissed_comment: why });
+  const page1 = Array.from({ length: 100 }, (_, i) => alert(i));
+  test("a full first page of dismissed alerts reads the rest: a bare dismissal on page 2 fails", () => {
+    const r = auditV("base", {}, { alerts: page1, alertsAll: [page1, [alert(100, "")]] });
+    expect(r.rows.get("alert-dismissal-reason")).toBe("fail");
+    expect(r.out).toContain("1 of 101 dismissed alert(s)");
+  });
+  test("control: fewer than 100 dismissed alerts makes no paginated call", () => {
+    const r = auditV("base", {}, { alerts: page1.slice(0, 99) });
+    expect(r.rows.get("alert-dismissal-reason")).toBe("pass");
+    expect(r.calls).not.toContain("--paginate");
   });
 });

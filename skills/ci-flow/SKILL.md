@@ -89,7 +89,7 @@ decision, written beside the change.
 
 **Toolchain**
 - One exact bun and one exact node (`x.y.z`), everywhere [toolchain-exact]; a test refuses `latest`, a bare major and two different pins [toolchain-guard-test] — `latest` turns CI red on a release with no change in the tree.
-- EVERY job that runs node/npm/npx (or bun) sets that pin [toolchain-every-job] — one exact pin in one job passes toolchain-exact while the other jobs run the runner image's node, which moves when GitHub updates it. The deploy job counts.
+- EVERY job that runs node/npm/npx (or bun) sets that pin [toolchain-every-job] — one exact pin in one job passes toolchain-exact while the other jobs run the runner image's node, which moves when GitHub updates it. The deploy and deploy-scope jobs count, and so does node run by a tracked script the step calls.
 - The hosting platform's runtime is the same pin, changed in the same PR: flip the platform setting BEFORE the preview (it builds remotely from that setting), then read the build log for "version changed from X to Y".
 - The local runner reads the pins from the workflow and REFUSES a mismatch, bun AND node [local-refuses-bun, local-refuses-node] — a green run under another engine is not CI's green.
 
