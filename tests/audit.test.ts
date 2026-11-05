@@ -777,3 +777,29 @@ describe("limits closed (2026-11-05)", () => {
     expect(r.calls).not.toContain("--paginate");
   });
 });
+
+describe("Dependabot on a repo without workflows (2026-11-05)", () => {
+  const NO_WF = { ".github/workflows/ci.yml": null, ".github/workflows/deploy.yml": null };
+  const BARE = { ...NO_WF, ".github/dependabot.yml": null, "tools/cli/package.json": null, "tools/cli/package-lock.json": null, "bun.lock": null };
+  test("no workflow, no action, no manifest: both Dependabot rows are n.a.", () => {
+    const r = audit(BARE, {}, ["--config-only"]);
+    expect(r.rows.get("dependabot-ecosystems")).toBe("n.a.");
+    expect(r.rows.get("dependabot-actions-grouped")).toBe("n.a.");
+  });
+  test("control: a manifest still needs dependabot.yml, and the fix names no github-actions", () => {
+    const r = audit({ ...BARE, "pyproject.toml": "[project]\nname = \"x\"\n" }, {}, ["--config-only"]);
+    expect(r.rows.get("dependabot-ecosystems")).toBe("fail");
+    expect(r.out).toContain("add .github/dependabot.yml: each package ecosystem the repo uses");
+    expect(r.rows.get("dependabot-actions-grouped")).toBe("n.a.");
+  });
+  test("control: a composite action alone still needs the github-actions entry", () => {
+    const r = audit({ ...BARE, "action.yml": "name: x\nruns:\n  using: composite\n  steps: []\n" }, {}, ["--config-only"]);
+    expect(r.rows.get("dependabot-ecosystems")).toBe("fail");
+    expect(r.rows.get("dependabot-actions-grouped")).toBe("fail");
+  });
+  test("control: workflows present and no github-actions entry still fails both", () => {
+    const r = audit(mut(".github/dependabot.yml", /  - package-ecosystem: github-actions[\s\S]*$/, ""));
+    expect(r.rows.get("dependabot-ecosystems")).toBe("fail");
+    expect(r.rows.get("dependabot-actions-grouped")).toBe("fail");
+  });
+});
