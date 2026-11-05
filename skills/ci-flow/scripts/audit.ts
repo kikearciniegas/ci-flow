@@ -60,12 +60,21 @@ const run = (cmd: string, args: string[]) => {
 };
 const git = (...a: string[]) => run("git", ["-C", repoPath, ...a]);
 
+/** `gh api` answers fetched in parallel before the checks ask (speed only: any other path is fetched when asked). */
+const prefetched = new Map<string, { ok: boolean; out: string; err: string }>();
+const prefetch = (paths: string[]) => Promise.all(paths.filter((p) => !prefetched.has(p)).map(async (p) => {
+  try {
+    const c = Bun.spawn(["gh", "api", p], { stdout: "pipe", stderr: "pipe" });
+    const [out, err, code] = await Promise.all([new Response(c.stdout).text(), new Response(c.stderr).text(), c.exited]);
+    prefetched.set(p, { ok: code === 0, out, err });
+  } catch { /* left to the synchronous call, which reports the error */ }
+}));
 /** A plan refusing a feature: reported as `blocked`, never as pass or as an unknown. */
 class Blocked extends Error {}
 type GhRes = { ok: true; data: any } | { ok: false; kind: "blocked" | "missing" | "error"; msg: string };
 /** GET that keeps the REASON of a refusal: the plan, a 404, or anything else (unknown). */
 const ghGet = (path: string): GhRes => {
-  const r = run("gh", ["api", path]);
+  const r = prefetched.get(path) ?? run("gh", ["api", path]);
   if (r.ok) { try { return { ok: true, data: r.out.trim() ? JSON.parse(r.out) : null }; } catch { return { ok: true, data: r.out }; } }
   const all = `${r.err}\n${r.out}`;
   const msg = `gh api ${path}: ${r.err.trim().split("\n")[0] || "failed"}`;
@@ -232,8 +241,21 @@ const jobsOf = (wf?: WF): Job[] => (wf ? Object.entries(wf.y?.jobs ?? {}).map(([
 const needsOf = (j: any): string[] => [j?.needs ?? []].flat().map(String);
 const ifOf = (j: any) => String(j?.if ?? "");
 const stepsOf = (j: any): any[] => (Array.isArray(j?.steps) ? j.steps : []);
-/** A job's `run:` text minus shell comment lines: a comment naming e2e or node is not a call. */
-const runOf = (j: any) => stepsOf(j).map((s) => String(s?.run ?? "")).join("\n").split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+/** Shell text minus comments: a `#` at a word start, outside quotes, to the end of its line. */
+const stripShellComments = (s: string) => {
+  let out = "", q = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === "\\" && q !== "'") { out += c + (s[++i] ?? ""); continue; }
+    if (q) { if (c === q) q = ""; }
+    else if (c === "'" || c === '"') q = c;
+    else if (c === "#" && (i === 0 || /\s/.test(s[i - 1]))) { while (i + 1 < s.length && s[i + 1] !== "\n") i++; continue; }
+    out += c;
+  }
+  return out;
+};
+/** A job's `run:` text minus shell comments: a comment naming e2e or node is not a call. */
+const runOf = (j: any) => stepsOf(j).map((s) => stripShellComments(String(s?.run ?? ""))).join("\n");
 const nameOf = (x: Job) => String(x.j?.name ?? x.id);
 const DRAFT = /!\s*github\.event\.pull_request\.draft\b/;
 const PR_EVENT = /github\.event_name\s*==\s*['"]pull_request['"]/;
@@ -329,6 +351,18 @@ if (defaultBranch === "HEAD") defaultBranch = "main";
 let protection: any, repoJson: any, protRes: GhRes | undefined;
 if (slug) {
   try { repoJson = gh(`repos/${slug}`); defaultBranch = repoJson.default_branch ?? defaultBranch; } catch (e) { ghError = (e as Error).message; }
+  if (repoJson) {
+    const org = repoJson.owner?.type === "Organization", wf = (w?: WF) => `actions/workflows/${w ? base(w.path) : ""}/runs`;
+    await prefetch([
+      `branches/${defaultBranch}/protection`, `rules/branches/${defaultBranch}`, "actions/secrets?per_page=100",
+      "vulnerability-alerts", "automated-security-fixes", "actions/permissions", "actions/permissions/workflow",
+      "actions/permissions/fork-pr-contributor-approval", "actions/permissions/fork-pr-workflows-private-repos",
+      "actions/permissions/artifact-and-log-retention", "private-vulnerability-reporting", "keys", "hooks", "environments",
+      `collaborators?affiliation=${org ? "outside" : "direct"}&per_page=100`, "dependabot/alerts?state=dismissed&per_page=100",
+      ...(CI && !configOnly ? [`${wf(CI)}?status=completed&per_page=20`, `${wf(CI)}?status=success&per_page=30`] : []),
+      ...(DEPLOY && !configOnly ? [`${wf(DEPLOY)}?status=success&per_page=5`] : []),
+    ].map((p) => `repos/${slug}/${p}`).concat(org ? `orgs/${repoJson.owner.login}` : "user"));
+  }
   protRes = ghGet(`repos/${slug}/branches/${defaultBranch}/protection`);
   if (protRes.ok) protection = protRes.data; else ghError ||= protRes.msg;
 }
@@ -1049,6 +1083,8 @@ const billedLine = (label: string, id: number, b = billed(id)) => `${label}${b.m
 if (!configOnly) try {
   if (!slug || !CI) throw new Error(ghError || "no CI workflow");
   const rs = gh(`repos/${slug}/actions/workflows/${ciFile}/runs?status=success&per_page=30`).workflow_runs ?? [];
+  await prefetch(rs.filter((r: any) => r.event === "pull_request").slice(0, 10).concat(rs.find((r: any) => r.event === "push" && r.head_branch === defaultBranch) ?? [])
+    .map((r: any) => `repos/${slug}/actions/runs/${r.id}/jobs?per_page=100`));
   const prs = rs.filter((r: any) => r.event === "pull_request").slice(0, 10).map((r: any) => ({ r, b: billed(r.id) }));
   const full = prs.sort((a: any, b: any) => b.b.n - a.b.n)[0];
   minutes.push(full ? billedLine("full PR run   ", full.r.id, full.b) : "full PR run   no successful pull_request run found");
