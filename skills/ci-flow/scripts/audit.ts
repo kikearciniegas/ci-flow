@@ -64,6 +64,9 @@ const ls = git("ls-tree", "-r", "--name-only", ref);
 if (!ls.ok) { console.error(`cannot read ${ref} in ${repoPath}: ${ls.err.trim()}`); process.exit(2); }
 const FILES = ls.out.split("\n").filter(Boolean);
 const TRACKED = new Set(FILES);
+const HAS_MANIFEST = FILES.some((f) => !f.includes("node_modules/") && /(^|\/)(package\.json|bun\.lockb?|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|pyproject\.toml|requirements[^/]*\.txt|uv\.lock|Pipfile\.lock)$/.test(f));
+// The github-actions ecosystem updates `uses:` lines: with no workflow and no action there is nothing to update.
+const HAS_ACTIONS = FILES.some((f) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(f) || /(^|\/)action\.ya?ml$/.test(f));
 const cache = new Map<string, string | null>();
 const show = (p: string): string | null => {
   if (!cache.has(p)) { const r = git("show", `${ref}:${p}`); cache.set(p, r.ok ? r.out : null); }
@@ -378,8 +381,7 @@ check("audit-ungated", () => {
     if (s.if) return fail(`${where}: audit step has if: ${s.if}`);
     return pass(`${where} (job ${x.id}, ungated)`);
   }
-  if (!FILES.some((f) => !f.includes("node_modules/") && /(^|\/)(package\.json|bun\.lockb?|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|pyproject\.toml|requirements[^/]*\.txt|uv\.lock|Pipfile\.lock)$/.test(f)))
-    return na("no package manifest or lockfile: nothing to audit");
+  if (!HAS_MANIFEST) return na("no package manifest or lockfile: nothing to audit");
   return fail(`${ci.path}: no dependency audit step`);
 });
 // 8. Expensive jobs: PR event AND not draft AND scope, behind a cheap job.
@@ -645,15 +647,17 @@ const dbPath = FILES.find((f) => /^\.github\/dependabot\.ya?ml$/.test(f));
 const db = (() => { try { return dbPath ? (Bun.YAML.parse(show(dbPath) ?? "") as any) : undefined; } catch { return undefined; } })();
 const updates: any[] = db?.updates ?? [];
 check("dependabot-ecosystems", () => {
-  if (!db) return fail("no parseable .github/dependabot.yml", "add .github/dependabot.yml: github-actions (grouped, weekly) plus each package ecosystem the repo uses");
+  if (!db && !dbPath && !HAS_ACTIONS && !HAS_MANIFEST) return na("no workflow, action or package manifest: no ecosystem to update");
+  if (!db) return fail("no parseable .github/dependabot.yml", `add .github/dependabot.yml: ${HAS_ACTIONS ? "github-actions (grouped, weekly) plus " : ""}each package ecosystem the repo uses`);
   const eco = (e: string, d?: string) => updates.some((u) => u["package-ecosystem"] === e && (!d || String(u.directory).replace(/\/$/, "") === d));
   const lockDirs = DEPLOY_LOCKS.map((f) => `/${dir(f)}`);
-  const m = [eco("github-actions") ? "" : "no github-actions", TRACKED.has("bun.lock") && !eco("bun") ? "bun.lock but no bun ecosystem" : "",
+  const m = [eco("github-actions") || !HAS_ACTIONS ? "" : "no github-actions", TRACKED.has("bun.lock") && !eco("bun") ? "bun.lock but no bun ecosystem" : "",
     ...lockDirs.filter((d) => !eco("npm", d)).map((d) => `no npm entry for ${d}`)].filter(Boolean);
   return m.length ? fail(`${dbPath}: ${m.join(", ")}`) : pass(`${dbPath}: ${updates.map((u) => `${u["package-ecosystem"]}${u.directory !== "/" ? ` ${u.directory}` : ""}`).join(", ")}`);
 });
 check("dependabot-actions-grouped", () => {
   const u = updates.find((u) => u["package-ecosystem"] === "github-actions");
+  if (!u && !HAS_ACTIONS) return na("no workflow or action: github-actions ecosystem n.a.");
   if (!u) return fail("no github-actions entry");
   return u.groups && Object.keys(u.groups).length ? pass(`${dbPath}: github-actions grouped`) : fail(`${at(dbPath!, /github-actions/)}: github-actions not grouped (one full CI run per action bump)`);
 });

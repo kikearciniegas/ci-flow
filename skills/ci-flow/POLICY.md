@@ -154,7 +154,7 @@ Repo settings live outside the tree, so nothing reviews them unless a rule names
 - **Always on, any visibility:**
   - Dependabot alerts and security updates;
   - a dependency audit in the cheap CI job with no severity threshold (exemptions only by advisory id, with a reason);
-  - `.github/dependabot.yml` for the ecosystems in use, plus `github-actions` grouped;
+  - `.github/dependabot.yml` for the ecosystems in use, plus `github-actions` grouped when the repo has a workflow or an action;
   - artifact and log retention ≤ 30 days.
 - **An alert inside a vendored tool's tree** (a deploy CLI):
   - `overrides` to the patched version inside the same major;
