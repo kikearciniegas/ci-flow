@@ -630,6 +630,20 @@ describe("a comment naming a tool is not a call", () => {
     expect(r.rows.get("browser-job")).toBe("pass");
     expect(r.rows.get("toolchain-every-job")).toBe("pass");
   });
+  test("a trailing comment after a command is not a call either", () => {
+    // A block scalar: in a plain `run: cmd # x` YAML itself drops the comment.
+    const files = mut(CI, 'run: test "\${{ needs.unit.result }}" = success',
+      'run: |\n          test "\${{ needs.unit.result }}" = success  # e2e and npx named after the command');
+    const r = auditV("base", files);
+    expect(r.rows.get("browser-job")).toBe("pass");
+    expect(r.rows.get("toolchain-every-job")).toBe("pass");
+  });
+  test("a # inside quotes or mid-word starts no comment: the call after it still counts", () => {
+    for (const run of ['echo "# x" && npx playwright test', "echo '# x' && npx playwright test", "echo a#b && npx playwright test"]) {
+      const r = auditV("base", mut(CI, 'run: test "\${{ needs.unit.result }}" = success', `run: ${run}`));
+      expect(r.rows.get("browser-job")).toBe("fail");
+    }
+  });
 });
 
 describe("self-audit false positives", () => {
