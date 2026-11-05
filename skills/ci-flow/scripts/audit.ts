@@ -271,6 +271,9 @@ check("addons-declared", () => {
   const heavyJob = ciJobs.find((x) => isExpensive(x) || BROWSER.test(runOf(x.j)));
   const m = [unknown.length ? `unknown add-on(s): ${unknown.join(", ")} (known: ${Object.keys(ADDONS).join(", ")})` : "",
     heavyJob && !declared.includes("gated-expensive") ? `job ${heavyJob.id} is expensive but gated-expensive is not declared` : "",
+    // gated-expensive needs a scope output of its own, so only without it is a gating output a classifier.
+    // shortcut: an inline docs classifier beside gated-expensive is not seen; upgrade if one is found.
+    scopeJob && !declared.includes("classifier") && !declared.includes("gated-expensive") ? `job ${scopeJob.id}'s outputs gate other jobs (a classifier) but classifier is not declared` : "",
     DEPLOY && !declared.includes("deploy") ? `${DEPLOY.path} deploys but deploy is not declared` : ""].filter(Boolean);
   return m.length ? fail(`${DECL}: ${m.join("; ")}`) : pass(`${DECL}: ${declared.join(", ") || "no add-ons"} (others n.a.)`);
 });
@@ -348,29 +351,35 @@ check("classifier-shared", () => {
   return miss.length ? fail(`${base(classifier)} not invoked by: ${miss.join(", ")}`) : pass(`CI, ${hook} and ${local} all run ${base(classifier)}`);
 });
 // 7. The cheap ungated job: range gitleaks (pinned + sha256) and the audit.
+// Every workflow a PR runs counts: the scan may live in its own workflow beside CI.
+const prJobs = () => WFS.filter((w) => "pull_request" in w.on).flatMap((w) => jobsOf(w));
+/** A job-level `if:` that can skip the job (always() / !cancelled() alone never skip on a change). */
+const jobGated = (x: Job) => !!ifOf(x.j) && !/^\s*(\$\{\{)?\s*(always\(\)|!\s*cancelled\(\)|success\(\))\s*(\}\})?\s*$/.test(ifOf(x.j));
 check("cheap-secret-scan", () => {
   const ci = needCI();
-  for (const x of ciJobs) for (const s of stepsOf(x.j)) {
+  for (const x of prJobs()) for (const s of stepsOf(x.j)) {
     const r = String(s?.run ?? "");
     if (!/gitleaks/.test(r)) continue;
-    const where = at(ci.path, /gitleaks git|gitleaks detect/);
-    const miss = [isExpensive(x) || s.if ? "job or step is gated" : "", /sha256sum -c|shasum -a 256 -c/.test(r) ? "" : "no sha256 check",
+    const where = `${at(x.wf.path, /gitleaks git|gitleaks detect/)}`;
+    const miss = [isExpensive(x) || jobGated(x) || s.if ? "job or step is gated" : "", /sha256sum -c|shasum -a 256 -c/.test(r) ? "" : "no sha256 check",
       /releases\/download\/v[\d$]/.test(r) ? "" : "no pinned release", /--log-opts/.test(r) ? "" : "not a range scan (--log-opts)"].filter(Boolean);
     return miss.length ? fail(`${where}: ${miss.join(", ")}`) : pass(`${where} (job ${x.id})`);
   }
   return fail(`${ci.path}: no gitleaks step`);
 });
+const AUDITOR = /\b(bun|npm|pnpm|yarn)\s+audit\b|\bpip-audit\b|\buv\s+audit\b/;
 check("audit-ungated", () => {
   const ci = needCI();
-  if (!FILES.some((f) => !f.includes("node_modules/") && /(^|\/)(package\.json|bun\.lockb?|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/.test(f)))
-    return na("no package manifest or lockfile: nothing to audit");
-  for (const x of ciJobs) for (const s of stepsOf(x.j)) {
-    if (!/\b(bun|npm|pnpm|yarn)\s+audit\b/.test(String(s?.run ?? ""))) continue;
-    const where = at(ci.path, /\b(bun|npm|pnpm|yarn)\s+audit\b/);
-    if (isExpensive(x) || /pull_request/.test(ifOf(x.j))) return fail(`${where}: audit runs in gated job ${x.id}`);
+  // An audit step found is judged even without a manifest: dependencies can live in script headers (PEP 723).
+  for (const x of prJobs()) for (const s of stepsOf(x.j)) {
+    if (!AUDITOR.test(String(s?.run ?? ""))) continue;
+    const where = at(x.wf.path, AUDITOR);
+    if (isExpensive(x) || jobGated(x)) return fail(`${where}: audit runs in gated job ${x.id} (if: ${ifOf(x.j)})`);
     if (s.if) return fail(`${where}: audit step has if: ${s.if}`);
     return pass(`${where} (job ${x.id}, ungated)`);
   }
+  if (!FILES.some((f) => !f.includes("node_modules/") && /(^|\/)(package\.json|bun\.lockb?|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|pyproject\.toml|requirements[^/]*\.txt|uv\.lock|Pipfile\.lock)$/.test(f)))
+    return na("no package manifest or lockfile: nothing to audit");
   return fail(`${ci.path}: no dependency audit step`);
 });
 // 8. Expensive jobs: PR event AND not draft AND scope, behind a cheap job.
@@ -414,8 +423,9 @@ check("install-cache", () => {
 // on every PR (a sibling repo, 2026-11-04: 279 MB of browsers, ~17 x 115 MB of
 // tool caches, one per PR ref). Steps that save: actions/cache, and setup-*
 // with `cache:` / `enable-cache:`.
-// shortcut: a job counts as running on the push when its `if:` is empty or names
-// push / github.ref; a job gated another way is not seen as a writer.
+// shortcut: a job counts as running on the push unless its `if:` names
+// pull_request (without push / github.ref) or `event_name != 'push'`; a job
+// skipped on the push only through `needs:` is still counted as a writer.
 const cacheIdOf = (s: any): string | undefined => {
   const u = String(s?.uses ?? "").replace(/@.*/, "");
   if (u === "actions/cache" || u === "actions/cache/save") return String(s?.with?.path ?? "").trim() || undefined;
@@ -426,7 +436,11 @@ check("cache-default-branch", () => {
   const ci = needCI();
   const cached = ciJobs.flatMap((x) => stepsOf(x.j).map(cacheIdOf).filter(Boolean).map((id) => ({ id: id!, job: x })));
   if (!cached.length) return na("no cache step in CI");
-  const onPush = (x: Job) => "push" in ci.on && (!ifOf(x.j) || /\bpush\b|github\.ref\b/.test(ifOf(x.j)));
+  const onPush = (x: Job) => {
+    const i = ifOf(x.j);
+    if (!("push" in ci.on) || /event_name\s*!=\s*['"]push['"]/.test(i)) return false;
+    return !i || /event_name\s*==\s*['"]push['"]|github\.ref\b/.test(i) || !/pull_request/.test(i);
+  };
   const writers = new Set(cached.filter((c) => onPush(c.job)).map((c) => c.id));
   const bad = [...new Set(cached.filter((c) => !writers.has(c.id)).map((c) => `${c.job.id}: ${c.id}`))];
   return bad.length
@@ -608,6 +622,7 @@ check("deploy-preview", () => {
 const ciFile = CI ? base(CI.path) : "";
 check("ci-red-rate", () => {
   if (!slug) throw new Error(ghError);
+  needCI(); // no PR workflow: say so, never query an empty workflow path
   const rs = gh(`repos/${slug}/actions/workflows/${ciFile}/runs?status=completed&per_page=20`).workflow_runs ?? [];
   if (!rs.length) return fail("no completed runs to judge");
   const red = rs.filter((r: any) => r.conclusion === "failure");
