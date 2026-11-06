@@ -689,6 +689,16 @@ ${BASE[CI].match(SCAN)![0]}` });
     const job = BASE[CI].match(WARM)![0].replace("path: ~/.cache/ms-playwright", "path: ~/.cache/other");
     expect(auditV("base", warmWf("  push:\n    branches: [main]", job)).rows.get("cache-default-branch")).toBe("fail");
   });
+  const scanReq = (on: string) => ({
+    ".github/workflows/scan.yml": `name: scan\non:\n${on}\npermissions:\n  contents: read\njobs:\n  gitleaks:\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    steps:\n      - run: echo scan\n`,
+    ".github/required-checks.json": `["cheap", "unit-count", "browser", "gitleaks"]\n`,
+  });
+  test("a required check may be a job of another PR-triggered workflow", () => {
+    expect(auditV("base", scanReq("  pull_request:")).rows.get("required-declared")).toBe("pass");
+  });
+  test("control: a required name no PR-triggered workflow has is not a declared list", () => {
+    expect(auditV("base", scanReq("  push:\n    branches: [main]")).rows.get("required-declared")).toBe("fail");
+  });
   test("the range secret scan may live in its own PR-triggered workflow", () => {
     const r = auditV("base", { ...mut(CI, SCAN, ""), ...scanWf("  push:\n    branches: [main]\n  pull_request:") });
     expect(r.rows.get("cheap-secret-scan")).toBe("pass");

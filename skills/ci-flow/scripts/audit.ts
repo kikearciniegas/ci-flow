@@ -138,6 +138,9 @@ const DEPLOY = WFS.find((w) => w !== CI && (/deploy/i.test(base(w.path)) || /dep
 const ciJobs = jobsOf(CI);
 const DEPLOY_LOCKS = DEPLOY ? FILES.filter((f) => base(f) === "package-lock.json" && DEPLOY.text.includes(dir(f))) : [];
 const ciJobKeys = new Set(ciJobs.flatMap((x) => [x.id, nameOf(x)]));
+// A required check may come from any PR-triggered workflow (a sibling repo, 2026-11-05:
+// `gitleaks` lives in secret-scan.yml beside ci.yml's `checks`).
+const prJobKeys = new Set(WFS.filter((w) => "pull_request" in w.on).flatMap((w) => jobsOf(w).flatMap((x) => [x.id, nameOf(x)])));
 
 // The scope job: the one whose outputs other jobs' `if` reads most.
 const outRefs = new Map<string, number>();
@@ -194,7 +197,7 @@ const requiredJson = (() => {
   for (const f of FILES.filter((f) => /^\.github\/.*\.json$/.test(f))) {
     try {
       const v = JSON.parse(show(f) ?? "");
-      if (Array.isArray(v) && v.length > 0 && v.every((s) => typeof s === "string" && ciJobKeys.has(s))) return { path: f, list: v as string[] };
+      if (Array.isArray(v) && v.length > 0 && v.every((s) => typeof s === "string" && prJobKeys.has(s))) return { path: f, list: v as string[] };
     } catch { /* not this one */ }
   }
   return undefined;
