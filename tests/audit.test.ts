@@ -617,7 +617,7 @@ const MUTATIONS: [string, Record<string, string | null>, Record<string, unknown>
   ["webhooks", {}, { hooks: [{ id: 2, config: { url: "https://hooks.example.invalid/x", insecure_ssl: "0" } }] }],
   ["collaborators", {}, { collab: [{ login: "x", permissions: { admin: true } }] }],
   ["deploy-credential-scope", {}, { secrets: { secrets: [{ name: "VERCEL_TOKEN" }] } }],
-  ["deploy-credential-scope", {}, { envs: { environments: [{ name: "preview", deployment_branch_policy: null }] } }],
+  ["deploy-credential-scope", {}, { envs: { environments: [{ name: "preview", deployment_branch_policy: null }] }, collab: [{ login: "a", permissions: { push: true } }, { login: "b", permissions: { push: true } }] }],
   ["log-retention", {}, { retention: { days: 90 } }],
   ["commit-email-noreply", {}, {}, "base", { email: "t@example.invalid" }],
   ["gitleaks-precommit", {}, {}, "base", { hook: null }],
@@ -698,6 +698,21 @@ ${BASE[CI].match(SCAN)![0]}` });
   });
   test("control: a required name no PR-triggered workflow has is not a declared list", () => {
     expect(auditV("base", scanReq("  push:\n    branches: [main]")).rows.get("required-declared")).toBe("fail");
+  });
+  const openPreview = { environments: [...(GH_BASE.envs as any).environments, { name: "preview", deployment_branch_policy: null }] };
+  test("an environment open to any branch is accepted while one account alone can push", () => {
+    const r = auditV("base", {}, { envs: openPreview, collab: [{ login: "o", permissions: { admin: true, push: true } }] });
+    expect(r.rows.get("deploy-credential-scope")).toBe("pass");
+    expect(r.out).toContain("preview open to any branch, accepted while o is the only writer");
+  });
+  test("control: a second account with push access fails it", () => {
+    const r = auditV("base", {}, { envs: openPreview, collab: [{ login: "o", permissions: { admin: true } }, { login: "x", permissions: { push: true } }] });
+    expect(r.rows.get("deploy-credential-scope")).toBe("fail");
+    expect(r.out).toContain("2 accounts can push a branch (o, x)");
+  });
+  test("control: a read-only collaborator is not a writer", () => {
+    const r = auditV("base", {}, { envs: openPreview, collab: [{ login: "o", permissions: { admin: true } }, { login: "x", permissions: { pull: true } }] });
+    expect(r.rows.get("deploy-credential-scope")).toBe("pass");
   });
   test("the range secret scan may live in its own PR-triggered workflow", () => {
     const r = auditV("base", { ...mut(CI, SCAN, ""), ...scanWf("  push:\n    branches: [main]\n  pull_request:") });

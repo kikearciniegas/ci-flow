@@ -911,11 +911,18 @@ check("deploy-credential-scope", () => {
   if (!secRes?.ok) throw new Error(secRes?.msg ?? "secrets not readable");
   const envs: any[] = must(R("environments"))?.environments ?? [];
   const open = envs.filter((e) => !e.deployment_branch_policy).map((e) => e.name);
+  // Owner decision 2026-11-05 (POLICY.md, least privilege): an environment any branch
+  // can deploy to is accepted while one account alone can push; a second writer fails it.
+  const writers = open.length
+    ? (must(R("collaborators?affiliation=all&per_page=100")) ?? []).filter((c: any) => c.permissions?.push || c.permissions?.maintain || c.permissions?.admin).map((c: any) => c.login)
+    : [];
+  const sole = writers.length <= 1;
   const m = [deploySecrets.length ? `repository-level deploy-like secret(s), readable from any branch: ${deploySecrets.join(", ")}` : "",
-    open.length ? `environment(s) any branch can deploy to: ${open.join(", ")}` : ""].filter(Boolean);
+    open.length && !sole ? `environment(s) any branch can deploy to: ${open.join(", ")}, and ${writers.length} accounts can push a branch (${firstN(writers, 4, ", ")})` : ""].filter(Boolean);
   const fix = [deploySecrets.length ? `move each into an environment: gh secret set <NAME> --env <env> -R ${slug}, then gh secret delete <NAME> -R ${slug}` : "",
     open.length ? `gh api -X PUT repos/${slug}/environments/<env> --input - <<<'{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' && gh api -X POST repos/${slug}/environments/<env>/deployment-branch-policies -f name=${shq(defaultBranch)} -f type=branch` : ""].filter(Boolean).join("; ");
-  return m.length ? fail(m.join("; "), fix) : pass(`${repoSecrets.length} repository secret(s), none deploy-like; ${envs.length} environment(s), each branch-restricted`);
+  return m.length ? fail(m.join("; "), fix)
+    : pass(`${repoSecrets.length} repository secret(s), none deploy-like; ${envs.length} environment(s), ${open.length ? `${open.join(", ")} open to any branch, accepted while ${writers[0] ?? "one account"} is the only writer` : "each branch-restricted"}`);
 });
 check("log-retention", () => {
   needRepo();
