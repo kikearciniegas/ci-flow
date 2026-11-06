@@ -93,6 +93,17 @@ figure.diagram svg{height:auto}
 <li><strong>Caches the default branch never writes</strong> — <span class="badge b-done">DONE</span> 2026-11-04: new audit check <code>cache-default-branch</code> and the SKILL.md rule; the first rollout repo now shows it as its one FAIL (two PR-only caches), for its own session to fix.</li>
 <li><strong>Self-audit false positives</strong> — <span class="badge b-done">DONE</span> 2026-11-04: <code>audit-ungated</code> is n.a. without a package manifest; <code>browser-wait-proxy</code> counts only files that import Playwright.</li>
 <li><strong>First rollout</strong> — <span class="badge b-done">DONE</span> 2026-11-04 on one private repo: 22 audit FAILs to 0 (45 pass) over two PRs; protection applied after the first merge, as the policy orders.</li>
+<li><strong>Rollout, second batch</strong> — <span class="badge b-done">DONE</span> 2026-11-06 on four more repos (three in the org, one personal). Every audit is at 0 FAIL except one accepted: a Next.js build cache left unwarmed on purpose (warming it costs ~2 billed minutes per <code>main</code> push against under one saved on a PR's first run). The batch:
+<ul>
+<li><strong>Default-branch caches:</strong> written by a separate push-only <code>warm-caches.yml</code>, kept out of <code>ci.yml</code> so it is not a required check. Verified by the first <code>main</code> run saving each cache.</li>
+<li><strong>Toolchain:</strong> node pinned in the deploy-scope jobs.</li>
+<li><strong>Protect script:</strong> ported, with the required checks declared in the tree.</li>
+<li><strong>Actions policy:</strong> set per repo (selected actions, full-SHA pinning).</li>
+<li><strong>Repo recreate:</strong> one repo recreated clean under a random development name.</li>
+</ul>
+</li>
+<li><strong>Audit gaps the rollout found</strong> — <span class="badge b-done">DONE</span> 2026-11-05 (#14): caches saved by another push-triggered workflow count as default-branch writers; required checks may come from any <code>pull_request</code> workflow; a preview environment open to any branch passes while one account alone can push (POLICY.md exception, with its own token).</li>
+<li><strong>Separate preview deploy token</strong> — <span class="badge b-done">DONE</span> 2026-11-06 in both deploying repos: each <code>Preview</code> environment holds its own token, checked to differ from production; one preview deploy per repo answered healthy. A deploy token cannot be limited to previews, so this buys separate revocation and expiry, not isolation.</li>
 <li><strong>Audit reads shell comments as job content</strong> — <span class="badge b-done">DONE</span>. <code>runOf()</code> kept <code>#</code> lines in <code>run:</code> blocks, so a comment containing &quot;e2e&quot; made <code>browser-job</code> FAIL on a cheap job. Fixed: <code>runOf()</code> drops comment lines, and since #8 also trailing comments (a <code>#</code> at a word start outside quotes); tests &quot;a comment naming a tool is not a call&quot; cover <code>browser-job</code> and <code>toolchain-every-job</code>.</li>
 </ul>
 <h2 id="owner-decisions"><a class="anchor" href="#owner-decisions">#</a>Owner decisions</h2>
