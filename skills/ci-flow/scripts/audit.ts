@@ -425,9 +425,12 @@ check("install-cache", () => {
 // on every PR (a sibling repo, 2026-11-04: 279 MB of browsers, ~17 x 115 MB of
 // tool caches, one per PR ref). Steps that save: actions/cache, and setup-*
 // with `cache:` / `enable-cache:`.
+// A push-only workflow beside CI may be the writer (a sibling repo, 2026-11-05: its
+// guard tests require every ci.yml job to be a check, so the warm job lives apart).
 // shortcut: a job counts as running on the push unless its `if:` names
 // pull_request (without push / github.ref) or `event_name != 'push'`; a job
-// skipped on the push only through `needs:` is still counted as a writer.
+// skipped on the push only through `needs:` is still counted as a writer; another
+// workflow counts when it has any `push` trigger, its branches and keys unread.
 const cacheIdOf = (s: any): string | undefined => {
   const u = String(s?.uses ?? "").replace(/@.*/, "");
   if (u === "actions/cache" || u === "actions/cache/save") return String(s?.with?.path ?? "").trim() || undefined;
@@ -443,7 +446,8 @@ check("cache-default-branch", () => {
     if (!("push" in ci.on) || /event_name\s*!=\s*['"]push['"]/.test(i)) return false;
     return !i || /event_name\s*==\s*['"]push['"]|github\.ref\b/.test(i) || !/pull_request/.test(i);
   };
-  const writers = new Set(cached.filter((c) => onPush(c.job)).map((c) => c.id));
+  const elsewhere = WFS.filter((w) => w !== CI && "push" in w.on).flatMap((w) => jobsOf(w).filter(onPush).flatMap((x) => stepsOf(x.j).map(cacheIdOf).filter(Boolean)));
+  const writers = new Set([...cached.filter((c) => onPush(c.job)).map((c) => c.id), ...elsewhere]);
   const bad = [...new Set(cached.filter((c) => !writers.has(c.id)).map((c) => `${c.job.id}: ${c.id}`))];
   return bad.length
     ? fail(`${ci.path}: saved only by PR-gated jobs, so no other PR can restore it: ${firstN(bad, 4, "; ")}`)

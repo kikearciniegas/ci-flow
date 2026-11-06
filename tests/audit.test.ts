@@ -674,6 +674,21 @@ ${BASE[CI].match(SCAN)![0]}` });
     const r = auditV("base", mut(CI, "if: \${{ github.event_name == 'push' }}", "if: \${{ github.event_name != 'push' }}"));
     expect(r.rows.get("cache-default-branch")).toBe("fail");
   });
+  const WARM = /  warm-browsers:\n[\s\S]*?npx playwright install chromium\n/;
+  const warmWf = (on: string, job = BASE[CI].match(WARM)![0]) => ({
+    ...mut(CI, WARM, ""),
+    ".github/workflows/warm.yml": `name: warm\non:\n${on}\npermissions:\n  contents: read\njobs:\n${job}`,
+  });
+  test("a push-only workflow beside CI may write the PR jobs' caches", () => {
+    expect(auditV("base", warmWf("  push:\n    branches: [main]")).rows.get("cache-default-branch")).toBe("pass");
+  });
+  test("control: that workflow on pull_request only writes no default-branch cache", () => {
+    expect(auditV("base", warmWf("  pull_request:")).rows.get("cache-default-branch")).toBe("fail");
+  });
+  test("control: a push workflow caching another path does not count", () => {
+    const job = BASE[CI].match(WARM)![0].replace("path: ~/.cache/ms-playwright", "path: ~/.cache/other");
+    expect(auditV("base", warmWf("  push:\n    branches: [main]", job)).rows.get("cache-default-branch")).toBe("fail");
+  });
   test("the range secret scan may live in its own PR-triggered workflow", () => {
     const r = auditV("base", { ...mut(CI, SCAN, ""), ...scanWf("  push:\n    branches: [main]\n  pull_request:") });
     expect(r.rows.get("cheap-secret-scan")).toBe("pass");
