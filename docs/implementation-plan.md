@@ -32,6 +32,14 @@ flowchart LR
 - **Caches the default branch never writes** — DONE 2026-11-04: new audit check `cache-default-branch` and the SKILL.md rule; the first rollout repo now shows it as its one FAIL (two PR-only caches), for its own session to fix.
 - **Self-audit false positives** — DONE 2026-11-04: `audit-ungated` is n.a. without a package manifest; `browser-wait-proxy` counts only files that import Playwright.
 - **First rollout** — DONE 2026-11-04 on one private repo: 22 audit FAILs to 0 (45 pass) over two PRs; protection applied after the first merge, as the policy orders.
+- **Rollout, second batch** — DONE 2026-11-06 on four more repos (three in the org, one personal). Every audit is at 0 FAIL except one accepted: a Next.js build cache left unwarmed on purpose (warming it costs ~2 billed minutes per `main` push against under one saved on a PR's first run). The batch:
+  - **Default-branch caches:** written by a separate push-only `warm-caches.yml`, kept out of `ci.yml` so it is not a required check. Verified by the first `main` run saving each cache.
+  - **Toolchain:** node pinned in the deploy-scope jobs.
+  - **Protect script:** ported, with the required checks declared in the tree.
+  - **Actions policy:** set per repo (selected actions, full-SHA pinning).
+  - **Repo recreate:** one repo recreated clean under a random development name.
+- **Audit gaps the rollout found** — DONE 2026-11-05 (#14): caches saved by another push-triggered workflow count as default-branch writers; required checks may come from any `pull_request` workflow; a preview environment open to any branch passes while one account alone can push (POLICY.md exception, with its own token).
+- **Separate preview deploy token** — DONE 2026-11-06 in both deploying repos: each `Preview` environment holds its own token, checked to differ from production; one preview deploy per repo answered healthy. A deploy token cannot be limited to previews, so this buys separate revocation and expiry, not isolation.
 - **Audit reads shell comments as job content** — DONE. `runOf()` kept `#` lines in `run:` blocks, so a comment containing "e2e" made `browser-job` FAIL on a cheap job. Fixed: `runOf()` drops comment lines, and since #8 also trailing comments (a `#` at a word start outside quotes); tests "a comment naming a tool is not a call" cover `browser-job` and `toolchain-every-job`.
 
 ## Owner decisions
