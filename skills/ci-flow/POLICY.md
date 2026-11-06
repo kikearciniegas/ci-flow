@@ -140,6 +140,7 @@ Repo settings live outside the tree, so nothing reviews them unless a rule names
 - **Least privilege everywhere:**
   - Workflows declare `permissions: contents: read` at the top and widen per job only where needed.
   - Deploy credentials are ENVIRONMENT secrets, on an environment whose branch policy allows the default branch only.
+    - **Exception, the preview environment (owner, 2026-11-05):** it may accept any branch while one account alone can push to the repo, so a deploy-workflow change can be previewed from its PR branch before it reaches production. The day a second account gets push access, restrict it to the default branch or move previews to a separate hosting scope. Give it its own token, never the production one, so each can be rotated alone. The audit (`deploy-credential-scope`) fails again as soon as a second writer appears.
   - **A job that holds a deploy token runs no repository code.** A decision that needs the code runs in its own job with no secrets, and hands the token jobs an output. Unsetting the token for one subprocess is not isolation.
   - Pin third-party actions to a full commit SHA with the version in a comment, and enforce SHA pinning in the Actions policy once every workflow is pinned.
   - Never use `pull_request_target` with a checkout of the PR head.

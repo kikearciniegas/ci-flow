@@ -138,6 +138,9 @@ const DEPLOY = WFS.find((w) => w !== CI && (/deploy/i.test(base(w.path)) || /dep
 const ciJobs = jobsOf(CI);
 const DEPLOY_LOCKS = DEPLOY ? FILES.filter((f) => base(f) === "package-lock.json" && DEPLOY.text.includes(dir(f))) : [];
 const ciJobKeys = new Set(ciJobs.flatMap((x) => [x.id, nameOf(x)]));
+// A required check may come from any PR-triggered workflow (a sibling repo, 2026-11-05:
+// `gitleaks` lives in secret-scan.yml beside ci.yml's `checks`).
+const prJobKeys = new Set(WFS.filter((w) => "pull_request" in w.on).flatMap((w) => jobsOf(w).flatMap((x) => [x.id, nameOf(x)])));
 
 // The scope job: the one whose outputs other jobs' `if` reads most.
 const outRefs = new Map<string, number>();
@@ -194,7 +197,7 @@ const requiredJson = (() => {
   for (const f of FILES.filter((f) => /^\.github\/.*\.json$/.test(f))) {
     try {
       const v = JSON.parse(show(f) ?? "");
-      if (Array.isArray(v) && v.length > 0 && v.every((s) => typeof s === "string" && ciJobKeys.has(s))) return { path: f, list: v as string[] };
+      if (Array.isArray(v) && v.length > 0 && v.every((s) => typeof s === "string" && prJobKeys.has(s))) return { path: f, list: v as string[] };
     } catch { /* not this one */ }
   }
   return undefined;
@@ -425,9 +428,12 @@ check("install-cache", () => {
 // on every PR (a sibling repo, 2026-11-04: 279 MB of browsers, ~17 x 115 MB of
 // tool caches, one per PR ref). Steps that save: actions/cache, and setup-*
 // with `cache:` / `enable-cache:`.
+// A push-only workflow beside CI may be the writer (a sibling repo, 2026-11-05: its
+// guard tests require every ci.yml job to be a check, so the warm job lives apart).
 // shortcut: a job counts as running on the push unless its `if:` names
 // pull_request (without push / github.ref) or `event_name != 'push'`; a job
-// skipped on the push only through `needs:` is still counted as a writer.
+// skipped on the push only through `needs:` is still counted as a writer; another
+// workflow counts when it has any `push` trigger, its branches and keys unread.
 const cacheIdOf = (s: any): string | undefined => {
   const u = String(s?.uses ?? "").replace(/@.*/, "");
   if (u === "actions/cache" || u === "actions/cache/save") return String(s?.with?.path ?? "").trim() || undefined;
@@ -443,7 +449,8 @@ check("cache-default-branch", () => {
     if (!("push" in ci.on) || /event_name\s*!=\s*['"]push['"]/.test(i)) return false;
     return !i || /event_name\s*==\s*['"]push['"]|github\.ref\b/.test(i) || !/pull_request/.test(i);
   };
-  const writers = new Set(cached.filter((c) => onPush(c.job)).map((c) => c.id));
+  const elsewhere = WFS.filter((w) => w !== CI && "push" in w.on).flatMap((w) => jobsOf(w).filter(onPush).flatMap((x) => stepsOf(x.j).map(cacheIdOf).filter(Boolean)));
+  const writers = new Set([...cached.filter((c) => onPush(c.job)).map((c) => c.id), ...elsewhere]);
   const bad = [...new Set(cached.filter((c) => !writers.has(c.id)).map((c) => `${c.job.id}: ${c.id}`))];
   return bad.length
     ? fail(`${ci.path}: saved only by PR-gated jobs, so no other PR can restore it: ${firstN(bad, 4, "; ")}`)
@@ -904,11 +911,18 @@ check("deploy-credential-scope", () => {
   if (!secRes?.ok) throw new Error(secRes?.msg ?? "secrets not readable");
   const envs: any[] = must(R("environments"))?.environments ?? [];
   const open = envs.filter((e) => !e.deployment_branch_policy).map((e) => e.name);
+  // Owner decision 2026-11-05 (POLICY.md, least privilege): an environment any branch
+  // can deploy to is accepted while one account alone can push; a second writer fails it.
+  const writers = open.length
+    ? (must(R("collaborators?affiliation=all&per_page=100")) ?? []).filter((c: any) => c.permissions?.push || c.permissions?.maintain || c.permissions?.admin).map((c: any) => c.login)
+    : [];
+  const sole = writers.length <= 1;
   const m = [deploySecrets.length ? `repository-level deploy-like secret(s), readable from any branch: ${deploySecrets.join(", ")}` : "",
-    open.length ? `environment(s) any branch can deploy to: ${open.join(", ")}` : ""].filter(Boolean);
+    open.length && !sole ? `environment(s) any branch can deploy to: ${open.join(", ")}, and ${writers.length} accounts can push a branch (${firstN(writers, 4, ", ")})` : ""].filter(Boolean);
   const fix = [deploySecrets.length ? `move each into an environment: gh secret set <NAME> --env <env> -R ${slug}, then gh secret delete <NAME> -R ${slug}` : "",
     open.length ? `gh api -X PUT repos/${slug}/environments/<env> --input - <<<'{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' && gh api -X POST repos/${slug}/environments/<env>/deployment-branch-policies -f name=${shq(defaultBranch)} -f type=branch` : ""].filter(Boolean).join("; ");
-  return m.length ? fail(m.join("; "), fix) : pass(`${repoSecrets.length} repository secret(s), none deploy-like; ${envs.length} environment(s), each branch-restricted`);
+  return m.length ? fail(m.join("; "), fix)
+    : pass(`${repoSecrets.length} repository secret(s), none deploy-like; ${envs.length} environment(s), ${open.length ? `${open.join(", ")} open to any branch, accepted while ${writers[0] ?? "one account"} is the only writer` : "each branch-restricted"}`);
 });
 check("log-retention", () => {
   needRepo();

@@ -617,7 +617,7 @@ const MUTATIONS: [string, Record<string, string | null>, Record<string, unknown>
   ["webhooks", {}, { hooks: [{ id: 2, config: { url: "https://hooks.example.invalid/x", insecure_ssl: "0" } }] }],
   ["collaborators", {}, { collab: [{ login: "x", permissions: { admin: true } }] }],
   ["deploy-credential-scope", {}, { secrets: { secrets: [{ name: "VERCEL_TOKEN" }] } }],
-  ["deploy-credential-scope", {}, { envs: { environments: [{ name: "preview", deployment_branch_policy: null }] } }],
+  ["deploy-credential-scope", {}, { envs: { environments: [{ name: "preview", deployment_branch_policy: null }] }, collab: [{ login: "a", permissions: { push: true } }, { login: "b", permissions: { push: true } }] }],
   ["log-retention", {}, { retention: { days: 90 } }],
   ["commit-email-noreply", {}, {}, "base", { email: "t@example.invalid" }],
   ["gitleaks-precommit", {}, {}, "base", { hook: null }],
@@ -673,6 +673,46 @@ ${BASE[CI].match(SCAN)![0]}` });
   test("control: a job excluded from the push (event_name != 'push') writes no default-branch cache", () => {
     const r = auditV("base", mut(CI, "if: \${{ github.event_name == 'push' }}", "if: \${{ github.event_name != 'push' }}"));
     expect(r.rows.get("cache-default-branch")).toBe("fail");
+  });
+  const WARM = /  warm-browsers:\n[\s\S]*?npx playwright install chromium\n/;
+  const warmWf = (on: string, job = BASE[CI].match(WARM)![0]) => ({
+    ...mut(CI, WARM, ""),
+    ".github/workflows/warm.yml": `name: warm\non:\n${on}\npermissions:\n  contents: read\njobs:\n${job}`,
+  });
+  test("a push-only workflow beside CI may write the PR jobs' caches", () => {
+    expect(auditV("base", warmWf("  push:\n    branches: [main]")).rows.get("cache-default-branch")).toBe("pass");
+  });
+  test("control: that workflow on pull_request only writes no default-branch cache", () => {
+    expect(auditV("base", warmWf("  pull_request:")).rows.get("cache-default-branch")).toBe("fail");
+  });
+  test("control: a push workflow caching another path does not count", () => {
+    const job = BASE[CI].match(WARM)![0].replace("path: ~/.cache/ms-playwright", "path: ~/.cache/other");
+    expect(auditV("base", warmWf("  push:\n    branches: [main]", job)).rows.get("cache-default-branch")).toBe("fail");
+  });
+  const scanReq = (on: string) => ({
+    ".github/workflows/scan.yml": `name: scan\non:\n${on}\npermissions:\n  contents: read\njobs:\n  gitleaks:\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    steps:\n      - run: echo scan\n`,
+    ".github/required-checks.json": `["cheap", "unit-count", "browser", "gitleaks"]\n`,
+  });
+  test("a required check may be a job of another PR-triggered workflow", () => {
+    expect(auditV("base", scanReq("  pull_request:")).rows.get("required-declared")).toBe("pass");
+  });
+  test("control: a required name no PR-triggered workflow has is not a declared list", () => {
+    expect(auditV("base", scanReq("  push:\n    branches: [main]")).rows.get("required-declared")).toBe("fail");
+  });
+  const openPreview = { environments: [...(GH_BASE.envs as any).environments, { name: "preview", deployment_branch_policy: null }] };
+  test("an environment open to any branch is accepted while one account alone can push", () => {
+    const r = auditV("base", {}, { envs: openPreview, collab: [{ login: "o", permissions: { admin: true, push: true } }] });
+    expect(r.rows.get("deploy-credential-scope")).toBe("pass");
+    expect(r.out).toContain("preview open to any branch, accepted while o is the only writer");
+  });
+  test("control: a second account with push access fails it", () => {
+    const r = auditV("base", {}, { envs: openPreview, collab: [{ login: "o", permissions: { admin: true } }, { login: "x", permissions: { push: true } }] });
+    expect(r.rows.get("deploy-credential-scope")).toBe("fail");
+    expect(r.out).toContain("2 accounts can push a branch (o, x)");
+  });
+  test("control: a read-only collaborator is not a writer", () => {
+    const r = auditV("base", {}, { envs: openPreview, collab: [{ login: "o", permissions: { admin: true } }, { login: "x", permissions: { pull: true } }] });
+    expect(r.rows.get("deploy-credential-scope")).toBe("pass");
   });
   test("the range secret scan may live in its own PR-triggered workflow", () => {
     const r = auditV("base", { ...mut(CI, SCAN, ""), ...scanWf("  push:\n    branches: [main]\n  pull_request:") });
