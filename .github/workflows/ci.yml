@@ -39,12 +39,14 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           base=${BASE:-$BEFORE}
-          # first push of a branch or a force push: fall back to the parent commit
-          git cat-file -e "$base^{commit}" 2>/dev/null || base=$(git rev-parse HEAD^)
+          # first push of a branch or a force push: fall back to the parent commit;
+          # a root commit (a new repository's first push) has none: scan it whole
+          git cat-file -e "$base^{commit}" 2>/dev/null || base=$(git rev-parse -q --verify 'HEAD^' || true)
+          range=${base:+$base..}HEAD
           curl -sfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gl.tgz
           echo "${GITLEAKS_SHA256}  gl.tgz" | sha256sum -c -
           tar xzf gl.tgz gitleaks
-          ./gitleaks git --redact --no-banner --log-opts="$base..HEAD" .
+          ./gitleaks git --redact --no-banner --log-opts="$range" .
       # Commit identities in the same range: GitHub noreply only (ci-flow POLICY.md §1,
       # personal data). Prints sha and role, never the address.
       - name: Commit identities (commits in this run)
@@ -53,10 +55,11 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           base=${BASE:-$BEFORE}
-          git cat-file -e "$base^{commit}" 2>/dev/null || base=$(git rev-parse HEAD^)
-          n=$(git rev-list --count "$base..HEAD")
-          [ "$n" -gt 0 ] || { echo "::error::empty commit range $base..HEAD"; exit 1; }
-          bad=$(git log --format='%h%x09%ae%x09%ce' "$base..HEAD" | awk -F'\t' '{
+          git cat-file -e "$base^{commit}" 2>/dev/null || base=$(git rev-parse -q --verify 'HEAD^' || true)
+          range=${base:+$base..}HEAD
+          n=$(git rev-list --count "$range")
+          [ "$n" -gt 0 ] || { echo "::error::empty commit range $range"; exit 1; }
+          bad=$(git log --format='%h%x09%ae%x09%ce' "$range" | awk -F'\t' '{
             for (i = 2; i <= 3; i++) { e = tolower($i)
               if (e !~ /@users\.noreply\.github\.com$/ && e != "noreply@github.com") print $1 " " (i == 2 ? "author" : "committer") } }')
           if [ -n "$bad" ]; then
