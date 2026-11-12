@@ -248,6 +248,7 @@ const GH_BASE: Record<string, unknown> = {
     enforce_admins: { enabled: true }, allow_force_pushes: { enabled: false }, allow_deletions: { enabled: false },
     required_pull_request_reviews: { required_approving_review_count: 0 },
   },
+  collaborators: [{ login: "o", permissions: { admin: true, push: true, pull: true } }],
   completed: { workflow_runs: Array.from({ length: 20 }, (_, i) => ({ id: 100 + i, event: "pull_request", conclusion: "success" })) },
   success: runsOk,
   alerts: [{ number: 7, dependency: { package: { name: "tar" } }, dismissed_comment: "deploy-CLI tree only; fix needs a major jump" }],
@@ -269,6 +270,7 @@ case "$2" in
   repos/o/r) f=repo ;;
   *dependabot/alerts*) f=alerts ;;
   */protection) f=protection ;;
+  *collaborators*) f=collaborators ;;
   */runs/*/jobs*) f=jobs ;;
   *status=completed*) f=completed ;;
   */runs*) f=success ;;
@@ -791,5 +793,46 @@ ${jif}
     const r = auditV("base", withJob(job(IF_GATE, POST_JSON.replace("preview-qa", "preview-qa-x"))), live(ALL));
     expect(r.rows.get("required-declared")).toBe("fail");
     expect(r.out).toContain("preview-qa is no PR job and no posted status");
+  });
+});
+
+// GitHub never counts an author's own approval, so on a repo whose only pusher is
+// the owner these review settings can never be met and every merge becomes --admin.
+describe("solo owner vs required reviews (0234)", () => {
+  const P = GH_BASE.protection as any;
+  const reviews = (rv: Record<string, unknown>) => ({ protection: { ...P, required_pull_request_reviews: { ...P.required_pull_request_reviews, ...rv } } });
+  const OWNER = { login: "o", permissions: { admin: true, push: true, pull: true } };
+  const OTHER = { login: "x", permissions: { admin: false, push: true, pull: true } };
+  const READER = { login: "y", permissions: { admin: false, push: false, pull: true } };
+  const ALL_OFF = { required_approving_review_count: 0, require_code_owner_reviews: false, require_last_push_approval: false };
+  const FIX = "gh api -X PATCH repos/o/r/branches/main/protection/required_pull_request_reviews -F required_approving_review_count=0 -F require_code_owner_reviews=false -F require_last_push_approval=false";
+  test("one collaborator + 1 approval: FAIL, with the one-command fix printed and not run", () => {
+    const r = audit({}, { ...reviews({ required_approving_review_count: 1 }), collaborators: [OWNER] });
+    expect(r.rows.get("protection-live")).toBe("fail");
+    expect(r.out).toContain("a solo owner can never satisfy required_approving_review_count=1; every merge becomes --admin");
+    expect(r.out).toContain(`- protection-live: ${FIX}`);
+    for (const l of r.calls.trim().split("\n")) expect(l).toMatch(/^api [^ ]+$/);
+  });
+  test("code-owner review or last-push approval alone: FAIL; a read-only collaborator does not count", () => {
+    for (const rv of [{ require_code_owner_reviews: true }, { require_last_push_approval: true }]) {
+      const r = audit({}, { ...reviews(rv), collaborators: [OWNER, READER] });
+      expect(r.rows.get("protection-live")).toBe("fail");
+      expect(r.out).toContain(`a solo owner can never satisfy ${Object.keys(rv)[0]};`);
+    }
+  });
+  test("one collaborator + all three off: pass", () => {
+    const r = audit({}, { ...reviews(ALL_OFF), collaborators: [OWNER] });
+    expect(r.rows.get("protection-live")).toBe("pass");
+  });
+  test("two collaborators with push + 1 approval: not this failure", () => {
+    const r = audit({}, { ...reviews({ required_approving_review_count: 1 }), collaborators: [OWNER, OTHER] });
+    expect(r.rows.get("protection-live")).toBe("pass");
+    expect(r.out).not.toContain("solo owner");
+  });
+  test("collaborators unreadable + 1 approval: FAIL saying so, never a pass", () => {
+    const r = audit({}, { ...reviews({ required_approving_review_count: 1 }), collaborators: { __err: "gh: Resource not accessible (HTTP 403)" } });
+    expect(r.rows.get("protection-live")).toBe("fail");
+    expect(r.out).toContain("could not read collaborators to judge required_approving_review_count=1");
+    expect(r.out).not.toContain(FIX);
   });
 });

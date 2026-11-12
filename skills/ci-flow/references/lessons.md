@@ -138,6 +138,13 @@ repo you are in may call it something else — find it, or add it.
 - Symptom: right after deleting 3.6 GB of caches it still read 9.56 GB; summing the direct listing gave 6.3 GB.
 - Guard: measure cache size by summing `size_in_bytes` over `GET /repos/<o>/<r>/actions/caches` (paginated), never from the usage endpoint.
 
+**28. An apt mirror stall burned the whole job timeout before any test ran.**
+- Symptom: `playwright install-deps` froze, then trickled (185 packages / 139 MB, a new package every few seconds); the 25-min job timeout was burned with no test run, and the one rerun did the same.
+- Cause: the hosted runner's Azure apt mirror was slow but moving. apt's `Acquire::http::Timeout` / `Acquire::Retries` did not help: an idle timeout cannot see a trickle.
+- Guard: a step `timeout-minutes` (bounds the cost), then a different mirror (42–59 s) or a .deb cache written only from the default branch and restore-only on PRs (21 s, "Need to get 0 B").
+- Gotcha: on GitHub runners the mirror is in `/etc/apt/apt-mirrors.txt` (the sources use `mirror+file:`), not in `*.sources`; a `sed` scoped to `*.sources` edits nothing, and only a post-edit check catches it.
+- Lesson: read the download timeline before choosing a remedy; "stall" and "slow" are different defects.
+
 ## Fix hints and reports
 
 **25. A tool's printed "fix" was applied over an existing file.**
