@@ -110,6 +110,7 @@ Private-repo minutes are metered against the plan quota (Free 2,000; Pro and Tea
   - the owner's denylist: exact strings (full names, personal emails, postal address, phone), case-insensitive;
   - a commit whose author or committer email is not noreply, or whose name is on the denylist.
   - Allowed: the owner's real name on a line containing `Copyright` and in `LICENSE*`; the GitHub login everywhere. So the denylist holds full names, never a bare surname: the login contains it.
+  - Also allowed, as authorship metadata of a published package or plugin (owner, 2026-11-12): a manifest's `"author"` or `"developerName"` field, `"name"` inside an `"author"` object, an `Authored by <name>` line, a `**Developer:** <name>` line in a store-submission doc, and a THIRD_PARTY_NOTICES sentence naming the project's author. The name anywhere else (prose, other fields, commit identities) stays blocked, and so do emails and phones on those lines.
   - The denylist lives in `~/.config/pii-guard/denylist`, mode 0600, one string per line, and never enters a repo, PR body, commit message, fixture or report. Missing, unreadable, empty or wider than 0600: the commit is refused.
   - Email and phone rules: gitleaks `[extend] useDefault = true` plus PII rules, in `~/.claude/git-hooks/pii-gitleaks.toml` and, for CI, a tracked `.gitleaks.toml` at the repo root.
   - Prove it with one blocked fake-email commit before trusting it. Tests use invented names in a temp denylist (`PII_GUARD_DENYLIST`). Report hits as file:line and counts, never the value.
