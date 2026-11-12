@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Rafael Arciniegas
+# CI for the ci-flow skill: one cheap job on every PR event and every push to main.
+# No expensive jobs, so no gates, classifier or local tiers (.github/ci-flow.json).
+# `checks` is the required check (.github/required-checks.json, scripts/protect-main.sh).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Secret scan of the commits in this run only (old fixtures would red every run).
+      - name: Gitleaks (commits in this run)
+        env:
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base=${BASE:-$BEFORE}
+          # first push of a branch or a force push: fall back to the parent commit
+          git cat-file -e "$base^{commit}" 2>/dev/null || base=$(git rev-parse HEAD^)
+          curl -sfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gl.tgz
+          echo "${GITLEAKS_SHA256}  gl.tgz" | sha256sum -c -
+          tar xzf gl.tgz gitleaks
+          ./gitleaks git --redact --no-banner --log-opts="$base..HEAD" .
+      # Commit identities in the same range: GitHub noreply only (ci-flow POLICY.md §1,
+      # personal data). Prints sha and role, never the address.
+      - name: Commit identities (commits in this run)
+        env:
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base=${BASE:-$BEFORE}
+          git cat-file -e "$base^{commit}" 2>/dev/null || base=$(git rev-parse HEAD^)
+          n=$(git rev-list --count "$base..HEAD")
+          [ "$n" -gt 0 ] || { echo "::error::empty commit range $base..HEAD"; exit 1; }
+          bad=$(git log --format='%h%x09%ae%x09%ce' "$base..HEAD" | awk -F'\t' '{
+            for (i = 2; i <= 3; i++) { e = tolower($i)
+              if (e !~ /@users\.noreply\.github\.com$/ && e != "noreply@github.com") print $1 " " (i == 2 ? "author" : "committer") } }')
+          if [ -n "$bad" ]; then
+            while read -r sha role; do echo "::error::commit $sha: $role email is not a GitHub noreply address"; done <<< "$bad"
+            exit 1
+          fi
+          echo "$n commit(s): every author and committer email is a GitHub noreply address"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+      # No dependencies: nothing to install or audit (no package.json).
+      - name: Tests
+        run: bun test tests/

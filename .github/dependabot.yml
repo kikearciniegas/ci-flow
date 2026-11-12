@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # Actions only: the repo has no package manifest. Grouped, so one CI run per batch.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
