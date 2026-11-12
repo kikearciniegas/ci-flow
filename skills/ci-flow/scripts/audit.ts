@@ -533,7 +533,28 @@ check("protection-live", () => {
   const m = [rs?.strict === true ? "" : "strict off", p.enforce_admins?.enabled ? "" : "admins not included", p.allow_force_pushes?.enabled === false ? "" : "force-push allowed",
     p.allow_deletions?.enabled === false ? "" : "deletion allowed", p.required_pull_request_reviews ? "" : "no PR required",
     checks.length ? "" : "no required checks", checks.every((c: any) => c.app_id === 15368) ? "" : "a check not pinned to app 15368"].filter(Boolean);
-  return m.length ? fail(`${slug} ${defaultBranch}: ${m.join(", ")}`) : pass(`${slug} ${defaultBranch}: strict, admins, PR, no force-push/delete, ${checks.length} checks @15368`);
+  // GitHub never counts an author's own approval: with one pusher these settings make every merge --admin.
+  const rv = p.required_pull_request_reviews ?? {};
+  const on = [(rv.required_approving_review_count ?? 0) >= 1 ? `required_approving_review_count=${rv.required_approving_review_count}` : "",
+    rv.require_code_owner_reviews ? "require_code_owner_reviews" : "", rv.require_last_push_approval ? "require_last_push_approval" : ""].filter(Boolean);
+  let fix: string | undefined;
+  if (on.length) {
+    const path = `repos/${slug}/collaborators?affiliation=all&per_page=100`;
+    const r = ghGet(path);
+    let cs: any[] | undefined = r.ok && Array.isArray(r.data) ? r.data : undefined;
+    if (cs?.length === 100) {
+      const all = run("gh", ["api", "--paginate", "--slurp", path]);
+      cs = all.ok ? JSON.parse(all.out).flat() : undefined;
+    }
+    const pushers = cs?.filter((c) => c?.permissions?.push).length;
+    // Unknown is never a pass: the settings stay unjudged and the row fails saying so.
+    if (pushers === undefined) m.push(`could not read collaborators to judge ${on.join(", ")} (${r.ok ? "unexpected or unpaginated answer" : r.msg})`);
+    else if (pushers === 1) {
+      m.push(`a solo owner can never satisfy ${on.join(", ")}; every merge becomes --admin`);
+      fix = `gh api -X PATCH repos/${slug}/branches/${defaultBranch}/protection/required_pull_request_reviews -F required_approving_review_count=0 -F require_code_owner_reviews=false -F require_last_push_approval=false`;
+    }
+  }
+  return m.length ? fail(`${slug} ${defaultBranch}: ${m.join(", ")}`, fix) : pass(`${slug} ${defaultBranch}: strict, admins, PR, no force-push/delete, ${checks.length} checks @15368`);
 });
 check("protection-matches-declared", () => {
   protBlocked();
