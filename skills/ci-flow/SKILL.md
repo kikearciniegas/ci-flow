@@ -64,6 +64,7 @@ decision, written beside the change.
 **Bounds and privilege**
 - `timeout-minutes` on every job [timeouts] — a hang otherwise bills to GitHub's 6-hour ceiling.
 - Top-level `permissions: contents: read`, widened per job [permissions-top]; every action pinned to a 40-char sha with the version in a comment [actions-sha-pinned] — a moved tag runs foreign code beside your secrets.
+- A step that downloads from a third-party mirror (apt, browser binaries, a toolchain fetch) gets its own `timeout-minutes`, about 3× its measured p95 — the job timeout is sized for the tests, so a stalled or trickling download burns all of it. A step timeout bounds the cost; only a cache written from the default branch, or another mirror, fixes a slow one (one repo, 2026-11: a 24-min stall → 373 s with a step timeout → 21 s from a .deb cache).
 
 **One classifier**
 - One tracked script decides `docs` vs `code` (and browser yes/no), invoked by CI's cheap job into `$GITHUB_OUTPUT`, by the pre-push hook and by the full local run [classifier-tracked, classifier-shared] — two classifiers drift, and the drift skips a suite.
