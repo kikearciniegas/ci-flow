@@ -20,6 +20,9 @@ regexes = [
   '''(?i)@users\.noreply\.github\.com$''',
   '''(?i)^noreply@github\.com$''',
   '''(?i)@(?:[a-z0-9-]+\.)*example\.(?:com|org|net|invalid)$''',
+  # A versioned file name, `pkg@1.2.3.patch` / `pkg@1.2.3.tgz`: two or more
+  # all-digit labels after the @ are a version, never a mail domain (2026-11-17).
+  '''@\d+(?:\.\d+)+\.[A-Za-z]+$''',
 ]
 
 # Narrow on purpose: versions, shas, timestamps and ids must not match.
