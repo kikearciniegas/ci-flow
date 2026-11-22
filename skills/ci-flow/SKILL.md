@@ -1,6 +1,7 @@
 ---
 name: ci-flow
-description: Keep GitHub Actions CI consistent and minute-efficient across projects, with a read-only audit script of the CI design. Use when writing or changing a workflow (.github/workflows/*.yml), adding a CI job or a required status check, setting up CI on a new repository, a red or failing CI run, budgeting a CI job's minutes, porting CI from one project to another, branch protection for the default branch, the pre-push hook or local CI tiers, deploy workflows, and Dependabot bumps of the deploy CLI or of GitHub Actions. Not for creating a repository or its settings, plan, licence or storage: that is repo-create.
+description: >-
+  Keep GitHub Actions CI consistent and minute-efficient across projects, with a read-only audit script of the CI design. Use when writing or changing a workflow (.github/workflows/*.yml), adding a CI job or a required status check, setting up CI on a new repository, a red or failing CI run, budgeting a CI job's minutes, porting CI from one project to another, branch protection for the default branch, the pre-push hook or local CI tiers, deploy workflows, and Dependabot bumps of the deploy CLI or of GitHub Actions. Not for creating a repository or its settings, plan, licence or storage: that is repo-create.
 ---
 
 # ci-flow — CI that reports every check and bills only what it must
