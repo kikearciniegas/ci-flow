@@ -57,6 +57,23 @@ Private-repo minutes are metered against the plan quota (Free 2,000; Pro and Tea
   - Docs and fix-ups go in while the PR is still a draft.
   - **Bring the PR up to date with the default branch BEFORE marking it ready** (owner, 2026-11-09); the mark-ready script refuses a head that does not contain `origin/<default>`. The one ready run is then the last unless the default branch moves. Updating after ready bought a second full run (kintag: 9 of 19 PRs ran the full suite twice, 5 of them from merging main after ready; ~23 billed min each).
   - Preview deploys come after this, never instead of it.
+- **Keep every PR small and short-lived (owner, 2026-11-25):**
+  - one concern per PR, opened and merged the same working day;
+  - about 400 changed lines of hand-written code at most; above that, split it. Generated files, lockfiles, vendored trees and pure renames do not count toward the limit;
+  - batching saves minutes only WITHIN one concern: put related fix-ups in one PR, but open a separate PR for unrelated work;
+  - a branch that has to outlive the day merges the default branch in while it is still a draft, never after it is marked ready.
+- **Exception: repos with no CI push straight to the default branch (owner, 2026-11-25).** A PR there runs no checks and gates nothing, so it adds round-trips without adding safety.
+  - **Qualifies only when ALL three hold, checked in the same command as the push:**
+    - no file under `.github/workflows/`;
+    - no branch protection on the default branch (`gh api repos/<o>/<r>/branches/<default>/protection` returns 404);
+    - nothing deploys from it: `gh api repos/<o>/<r>/deployments --jq length` is `0`. Vercel, Netlify and Cloudflare Pages deploy on push without Actions, and they record GitHub deployments.
+  - **Still required:**
+    - a fresh worktree off `origin/<default>`, because parallel sessions still share the checkout;
+    - the pre-commit gitleaks + PII hook on every commit, which becomes the only gate;
+    - `git push origin HEAD:<default>`, never a force-push; if the default branch moved, rebase onto it first;
+    - verify by sha (`git merge-base --is-ancestor <sha> origin/<default>`), then remove the worktree and branch.
+  - **Open a PR anyway** for a one-way-door change, or when the owner asks for a review.
+  - **The exception ends** as soon as the repo gains a workflow, a protection rule or a deploy. From then on every change goes through a PR.
 - **Release order, every change, every project (owner, 2026-11-07):**
   1. deploy the branch to preview;
   2. check that preview: the `preview-qa` status (deployed, smoke probes passed) and the local full run on the same head, which is the QA beyond the probes;
