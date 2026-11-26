@@ -65,7 +65,7 @@ Private-repo minutes are metered against the plan quota (Free 2,000; Pro and Tea
 - **Exception: repos with no CI push straight to the default branch (owner, 2026-11-25).** A PR there runs no checks and gates nothing, so it adds round-trips without adding safety.
   - **Qualifies only when ALL three hold, checked in the same command as the push:**
     - no file under `.github/workflows/`;
-    - no branch protection on the default branch (`gh api repos/<o>/<r>/branches/<default>/protection` returns 404);
+    - no branch protection on the default branch (`gh api repos/<o>/<r>/branches/<default>/protection` returns 404 — or 403 "Upgrade to GitHub Pro", a private repo on the Free plan, where protection cannot exist; any other answer does not qualify);
     - nothing deploys from it: `gh api repos/<o>/<r>/deployments --jq length` is `0`. Vercel, Netlify and Cloudflare Pages deploy on push without Actions, and they record GitHub deployments.
   - **Still required:**
     - a fresh worktree off `origin/<default>`, because parallel sessions still share the checkout;
